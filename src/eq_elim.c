@@ -62,28 +62,32 @@ static void eq_reflect(const c_float* v, const c_float tau, const int k, const i
     for(i = k+1; i < n; i++) y[i] -= w*v[i];
 }
 
+// eq_reflect for the four vectors c0..c3, in one pass over v
+static inline void eq_reflect4(const c_float* v, const c_float tau, const int k, const int n,
+        c_float* c0, c_float* c1, c_float* c2, c_float* c3){
+    int i;
+    c_float w0 = c0[k], w1 = c1[k], w2 = c2[k], w3 = c3[k];
+    for(i = k+1; i < n; i++){
+        const c_float vi = v[i];
+        w0 += vi*c0[i]; w1 += vi*c1[i]; w2 += vi*c2[i]; w3 += vi*c3[i];
+    }
+    w0 *= tau; w1 *= tau; w2 *= tau; w3 *= tau;
+    c0[k] -= w0; c1[k] -= w1; c2[k] -= w2; c3[k] -= w3;
+    for(i = k+1; i < n; i++){
+        const c_float vi = v[i];
+        c0[i] -= w0*vi; c1[i] -= w1*vi; c2[i] -= w2*vi; c3[i] -= w3*vi;
+    }
+}
+
 // Y <-- Q'Y for cnt vectors of length n (stride ld) with the reflectors
 // 0..nr-1, four vectors per pass over a reflector
 static DAQP_NOINLINE void eq_apply_QT_many(const c_float* V, const c_float* tau,
         const int nr, const int n, c_float* Y, const int cnt, const size_t ld){
-    int i, j, k;
+    int j, k;
     for(j = 0; j+3 < cnt; j += 4){
         c_float *c0 = Y+j*ld, *c1 = c0+ld, *c2 = c1+ld, *c3 = c2+ld;
-        for(k = 0; k < nr; k++){
-            const c_float* v = V+(size_t)k*n;
-            const c_float tk = tau[k];
-            c_float w0 = c0[k], w1 = c1[k], w2 = c2[k], w3 = c3[k];
-            for(i = k+1; i < n; i++){
-                const c_float vi = v[i];
-                w0 += vi*c0[i]; w1 += vi*c1[i]; w2 += vi*c2[i]; w3 += vi*c3[i];
-            }
-            w0 *= tk; w1 *= tk; w2 *= tk; w3 *= tk;
-            c0[k] -= w0; c1[k] -= w1; c2[k] -= w2; c3[k] -= w3;
-            for(i = k+1; i < n; i++){
-                const c_float vi = v[i];
-                c0[i] -= w0*vi; c1[i] -= w1*vi; c2[i] -= w2*vi; c3[i] -= w3*vi;
-            }
-        }
+        for(k = 0; k < nr; k++)
+            eq_reflect4(V+(size_t)k*n,tau[k],k,n,c0,c1,c2,c3);
     }
     for(; j < cnt; j++)
         for(k = 0; k < nr; k++) eq_reflect(V+(size_t)k*n,tau[k],k,n,Y+j*ld);
@@ -102,17 +106,7 @@ static DAQP_NOINLINE void eq_accumulate_Z(c_float* V, const c_float* tau, const 
         const c_float tk = tau[k];
         for(j = nr; j+3 < n; j += 4){
             c_float *c0 = V+(size_t)j*n, *c1 = c0+n, *c2 = c1+n, *c3 = c2+n;
-            c_float w0 = c0[k], w1 = c1[k], w2 = c2[k], w3 = c3[k];
-            for(i = k+1; i < n; i++){
-                const c_float vi = v[i];
-                w0 += vi*c0[i]; w1 += vi*c1[i]; w2 += vi*c2[i]; w3 += vi*c3[i];
-            }
-            w0 *= tk; w1 *= tk; w2 *= tk; w3 *= tk;
-            c0[k] -= w0; c1[k] -= w1; c2[k] -= w2; c3[k] -= w3;
-            for(i = k+1; i < n; i++){
-                const c_float vi = v[i];
-                c0[i] -= w0*vi; c1[i] -= w1*vi; c2[i] -= w2*vi; c3[i] -= w3*vi;
-            }
+            eq_reflect4(v,tk,k,n,c0,c1,c2,c3);
         }
         for(; j < n; j++) eq_reflect(v,tk,k,n,V+(size_t)j*n);
     }
@@ -369,7 +363,7 @@ static void eq_hess_times(const DAQPProblem* qp, const int metric, const c_float
 // Whether the general constraint i is an equality constraint that can be
 // eliminated (the same criteria as daqp_check_bounds for equal bounds)
 static int eq_is_candidate(const DAQPWorkspace* work, const DAQPProblem* qp, const int i){
-    const int s = work->sense[i];
+    const int s = DAQP_ZERO_ROW_SENSE(work->sense[i]);
     if(s & (DAQP_SOFT+DAQP_BINARY)) return 0;
     if(qp->bupper[i] - qp->blower[i] < work->settings->zero_tol) return 1;
     if(s & DAQP_AUTO_EQUALITY) return 0; // Its bounds are no longer equal
@@ -711,7 +705,7 @@ static int eq_build_reduction(DAQPWorkspace* work, DAQPProblem* qp){
         eq->ndrop = 0;
         for(c = 0; c < ms+mI; c++){
             const int id = (c < ms) ? c : gen_ids[c-ms];
-            if(DAQP_IS_SOFT(id)){ free(gen_ids); return 0; }
+            if(DAQP_ZERO_ROW_SENSE(work->sense[id]) & DAQP_SOFT){ free(gen_ids); return 0; }
             eq->drop_ids[eq->ndrop++] = id;
         }
         free(gen_ids);
@@ -757,6 +751,12 @@ static int eq_build_reduction(DAQPWorkspace* work, DAQPProblem* qp){
             if(j < n) cid[nc++] = i;
         }
         split = nc < nz; // Then some null directions have no curvature
+    }
+    else if(factored){ // Row i of H = R'R is zero iff column i of R is
+        for(j = 0; j < n; j++){
+            for(i = 0; i <= j; i++) if(qp->H[DAQP_R_OFFSET(i,n)+j] != 0) break;
+            if(i <= j) nc++;
+        }
     }
 
     // The reduced Hessian, and how the reduced problem is posed
@@ -871,7 +871,7 @@ form_W:
         const int id = (c < ms) ? c : gen_ids[c-ms];
         const c_float* row = eq->Ar+(size_t)c*nz;
         if(eq_dot(row,row,nz) <= zero_tol){
-            if(DAQP_IS_SOFT(id)){ free(gen_ids); return 0; }
+            if(DAQP_ZERO_ROW_SENSE(work->sense[id]) & DAQP_SOFT){ free(gen_ids); return 0; }
             eq->drop_ids[eq->ndrop++] = id;
             continue;
         }
@@ -1059,7 +1059,9 @@ static int eq_reduce_rhs(DAQPWorkspace* work, DAQPProblem* qp, const int warm){
     for(c = 0; c < eq->ndrop; c++){
         const int id = eq->drop_ids[c];
         const c_float val = (id < ms) ? eq->xp[id] : eq_dot(qp->A+(size_t)(id-ms)*n,eq->xp,n);
-        if(qp->bupper[id]-val < -primal_tol || qp->blower[id]-val > primal_tol){
+        if(qp->bupper[id]-val < -primal_tol || qp->blower[id]-val > primal_tol ||
+                ((work->sense[id] & DAQP_BINARY) &&
+                 qp->bupper[id]-val > primal_tol && val-qp->blower[id] > primal_tol)){
             // An inconsistent dependent equality is reported the same way as
             // when it is detected while forming the working set
             return eq_is_candidate(work,qp,id) ? DAQP_EXIT_OVERDETERMINED_INITIAL

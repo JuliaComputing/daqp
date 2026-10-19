@@ -163,9 +163,11 @@ void daqp_add_constraint(DAQPWorkspace *work, const int add_ind, c_float lam){
     work->sense[add_ind] &= ~DAQP_SLACK_SWITCHED;
     // Mark whether the slack is zero, given the multiplier
     if(DAQP_IS_SOFT(add_ind)){
-        DAQP_SET_MUTABLE(add_ind);
         const c_float w = daqp_soft_w(work,add_ind);
         if(w > 0){
+            // The slack switches when the constraint is removed (a soft equality
+            // with only a quadratic penalty stays immutable)
+            DAQP_SET_MUTABLE(add_ind);
             const c_float magnitude = (DAQP_IS_LOWER(add_ind) ? -lam : lam) >= w ? w : 0;
             lam = DAQP_IS_LOWER(add_ind) ? -magnitude : magnitude;
         }
@@ -597,8 +599,23 @@ int daqp_remove_blocking(DAQPWorkspace *work){
     return 1;
 }
 
+// x <-- L'\x for the unit lower triangular L 
+static void daqp_solve_Lt(const c_float *L, c_float *x, const int n){
+    int i, j;
+    for(i = n-1; i > 0; i--){
+        const c_float xi = x[i];
+        const c_float *Li = L + DAQP_ARSUM(i);
+        for(j = 0; j+4 <= i; j += 4){
+            const c_float a0 = x[j]-Li[j]*xi, a1 = x[j+1]-Li[j+1]*xi;
+            const c_float a2 = x[j+2]-Li[j+2]*xi, a3 = x[j+3]-Li[j+3]*xi;
+            x[j] = a0; x[j+1] = a1; x[j+2] = a2; x[j+3] = a3;
+        }
+        for(; j < i; j++) x[j] -= Li[j]*xi;
+    }
+}
+
 void daqp_compute_CSP(DAQPWorkspace *work){
-    int i,j,disp,start_disp;
+    int i,j,disp;
     c_float sum;
     const int has_l1 = DAQP_HAS_L1(work);
     // Forward substitution (xi <-- L\d)
@@ -618,34 +635,19 @@ void daqp_compute_CSP(DAQPWorkspace *work){
     for(i=work->reuse_ind; i<work->n_active; i++)
         work->zldl[i] = work->xldl[i]/work->D[i];
     //Backward substitution  (lam_star <-- L'\z)
-    start_disp = DAQP_ARSUM(work->n_active)-1;
-    for(i = work->n_active-1;i>=0;i--){
-        sum=work->zldl[i];
-        disp = start_disp--;
-        for(j=work->n_active-1;j>i;j--){
-            sum-=work->lam_star[j]*work->L[disp];
-            disp-=j;
-        }
-        work->lam_star[i] = sum;
-    }
+    for(i = 0; i < work->n_active; i++) work->lam_star[i] = work->zldl[i];
+    daqp_solve_Lt(work->L, work->lam_star, work->n_active);
     work->reuse_ind = work->n_active; // Save forward substitution information
 }
 
 //TODO this could probably be directly calculated in L
 void daqp_compute_singular_direction(DAQPWorkspace *work){
     // Step direction is stored in lam_star
-    int i,j,disp,offset_L= DAQP_ARSUM(work->sing_ind);
-    int start_disp= offset_L-1;
+    int i,offset_L= DAQP_ARSUM(work->sing_ind);
 
     // Backwards substitution (p_tidle <-- L'\(-l))
-    for(i = work->sing_ind-1;i>=0;i--){
-        work->lam_star[i] = -work->L[offset_L+i];
-        disp = start_disp--;
-        for(j=work->sing_ind-1;j>i;j--){
-            work->lam_star[i]-=work->lam_star[j]*work->L[disp];
-            disp-=j;
-        }
-    }
+    for(i = 0; i < work->sing_ind; i++) work->lam_star[i] = -work->L[offset_L+i];
+    daqp_solve_Lt(work->L, work->lam_star, work->sing_ind);
     work->lam_star[work->sing_ind]=1;
 
     // Orient the direction such that is is a descent direction
@@ -773,6 +775,18 @@ int daqp_activate_constraints(DAQPWorkspace *work){
     return exitflag;
 }
 
+// Rebuild the working set from sense. For hierarchical problems, only the
+// constraints of the first level are activated (since those are hard)
+int daqp_reactivate_constraints(DAQPWorkspace *work){
+    int error_flag;
+    const int m = work->m;
+    reset_daqp_workspace(work);
+    if(DAQP_IS_HIERARCHICAL(work)) work->m = work->hierarchy->break_points[0];
+    error_flag = daqp_activate_constraints(work);
+    work->m = m;
+    return error_flag;
+}
+
 // Deactivate all active constraints that are mutable (i.e., not equality constraints)
 void daqp_deactivate_constraints(DAQPWorkspace *work){
     int i;
@@ -801,18 +815,8 @@ void daqp_solve_working_set(DAQPWorkspace *work){
     for(i = 0; i < na; i++)
         work->zldl[i] = work->xldl[i]/work->D[i];
     // Backward substitution L'*dlam = zldl
-    {
-        int start_disp = DAQP_ARSUM(na)-1;
-        for(i = na-1; i >= 0; i--){
-            sum = work->zldl[i];
-            disp = start_disp--;
-            for(j = na-1; j > i; j--){
-                sum -= work->xldl[j]*work->L[disp];
-                disp -= j;
-            }
-            work->xldl[i] = sum;
-        }
-    }
+    for(i = 0; i < na; i++) work->xldl[i] = work->zldl[i];
+    daqp_solve_Lt(work->L, work->xldl, na);
 }
 
 // y <-- y - M_W'*dlam for the working set W
@@ -909,16 +913,18 @@ static c_float daqp_active_residual(const DAQPWorkspace *work, const int id){
     return val - (DAQP_IS_LOWER(id) ? qp->blower[id] : qp->bupper[id]);
 }
 
-// y <-- Rinv*y (as ldp2qp_solution, without v)
+// y <-- Rinv*y (undoing the normalization of the simple bounds)
 void daqp_apply_Rinv(DAQPWorkspace *work, c_float* y){
     int i, j, disp;
     const int n = work->n;
     if(work->Rinv != NULL){
         for(i = 0, disp = 0; i < n; i++){
-            y[i] *= work->Rinv[disp++];
-            for(j = i+1; j < n; j++) y[i] += work->Rinv[disp++]*y[j];
+            c_float sum = y[i]*work->Rinv[disp++];
+            for(j = i+1; j < n; j++) sum += work->Rinv[disp++]*y[j];
+            y[i] = sum;
         }
-        if(work->scaling != NULL)
+        // Generated workspaces store a normalized Rinv without the scaling array
+        if((work->state & DAQP_STATE_RINV_NORMALIZED) && work->scaling != NULL)
             for(i = 0; i < work->ms; i++) y[i] /= work->scaling[i];
     }
     else if(work->RinvD != NULL)

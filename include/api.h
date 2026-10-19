@@ -36,7 +36,6 @@ int setup_daqp_ldp(DAQPWorkspace *work, DAQPProblem* qp, const int init_mask);
 void setup_daqp_hiqp(DAQPWorkspace *work, int* break_points, int nh);
 int setup_daqp_bnb(DAQPWorkspace* work, int* sense, int nb, int ns);
 int daqp_update_bnb(DAQPWorkspace* work, const int m);
-int setup_daqp_avi(DAQPAVI* avi, DAQPProblem* p, DAQPWorkspace* work, c_float* setup_time);
 
 void allocate_daqp_settings(DAQPWorkspace *work);
 void allocate_daqp_workspace(DAQPWorkspace *work, int n, int ns);
@@ -59,7 +58,6 @@ void daqp_extract_result(DAQPResult* res, DAQPWorkspace* work);
 // result of the original problem, and carry its working set over to the
 // original constraints
 void daqp_eq_expand(DAQPResult* res, DAQPWorkspace* work);
-void daqp_extract_active_duals(DAQPResult* res, DAQPWorkspace* work);
 void daqp_default_settings(DAQPSettings *settings);
 void daqp_minrep(int* is_redundant, c_float* A, c_float* b, int n, int m, int ms);
 int  daqp_first_violating(c_float* x, c_float* A, c_float* bu, c_float* bl, int n, int m, int ms, c_float tol);

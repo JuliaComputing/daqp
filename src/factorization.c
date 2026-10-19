@@ -14,10 +14,6 @@ static c_float dot_row(const c_float* a, const c_float* b, const int n){
     return (s0+s1)+(s2+s3);
 }
 
-c_float daqp_dot(const c_float* v1, const c_float* v2, const int n) {
-    return daqp_dot_inline(v1, v2, n);
-}
-
 // For a reduced problem in sparse form: G*a' for the sparse row a of
 // constraint id, times scale (a row of G if a has a single nonzero)
 static const c_float* sparse_gram_row(DAQPSparseA *s, const int id, c_float *scale){

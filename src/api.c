@@ -8,7 +8,7 @@
 // Solve problem from a given workspace and measure setup and solve time
 void daqp_solve(DAQPResult *res, DAQPWorkspace *work){
     int reduced;
-    if(work->break_points == NULL) work->nh = 1;
+    work->outer_iter = 1;
     // A policy that no longer eliminates takes effect before the solve
     if(DAQP_IS_REDUCED(work) &&
             work->settings->eq_reduction == DAQP_EQ_REDUCTION_OFF &&
@@ -143,7 +143,7 @@ int setup_daqp_main(DAQPProblem* qp, DAQPWorkspace *work, c_float* setup_time, i
     if(qp->nh > 1){
         ns = 0; // Reset
         int start = 0;
-        for(int i = 0; i < qp->nh; i++){
+        for(i = 0; i < qp->nh; i++){
             ns = (ns  > qp->break_points[i]-start) ? ns : qp->break_points[i]-start;
             start = qp->break_points[i];
         }
@@ -162,13 +162,7 @@ int setup_daqp_main(DAQPProblem* qp, DAQPWorkspace *work, c_float* setup_time, i
     }
 
     errorflag = setup_daqp_bnb(work, qp->sense, nb, ns);
-    if(errorflag < 0){
-        if(own_settings==0) work->settings = NULL;
-        free_daqp_workspace(work);
-        return errorflag;
-    }
-
-    errorflag = setup_daqp_ldp(work,qp,init_mask);
+    if(errorflag >= 0) errorflag = setup_daqp_ldp(work,qp,init_mask);
     if(errorflag < 0){
         if(own_settings==0) work->settings = NULL;
         free_daqp_workspace(work);
@@ -235,10 +229,7 @@ int setup_daqp_ldp(DAQPWorkspace *work, DAQPProblem *qp, const int init_mask){
 
 
 void setup_daqp_hiqp(DAQPWorkspace* work, int* break_points, int nh){
-    if(nh > 1){
-        work->nh = nh;
-        work->break_points= break_points;
-    }
+    if(nh > 1) daqp_set_hierarchy(work,break_points,nh);
 }
 
 int setup_daqp_bnb(DAQPWorkspace* work, int* sense, int nb, int ns){
@@ -298,15 +289,9 @@ void free_daqp_ldp(DAQPWorkspace *work){
     if(work->sense==NULL) return; // Already freed
     free_daqp_eq(work); // Restores the full LDP before it is freed
     free(work->sense);
-    if(work->Rinv != NULL){
-        free(work->Rinv);
-    }
-    if(work->RinvD != NULL){
-        free(work->RinvD);
-    }
-    if(work->v != NULL){
-        free(work->v);
-    }
+    free(work->Rinv);
+    free(work->RinvD);
+    free(work->v);
     if(work->scaling != NULL){
         free(work->scaling);
         free(work->M);
@@ -385,8 +370,8 @@ void allocate_daqp_workspace(DAQPWorkspace *work, int n, int ns){
     work->w_us= NULL;
 
     work->bnb = NULL;
-    work->nh = 1;
-    work->break_points = NULL;
+    work->outer_iter = 1;
+    work->hierarchy = NULL;
     work->avi = NULL;
     work->eq = NULL;
     work->timer = NULL;
@@ -447,17 +432,7 @@ void daqp_refresh_soft_weights(DAQPWorkspace *work){
             break;
         }
     // Reset the factorization
-    if(rebuild){
-        reset_daqp_workspace(work);
-        if(DAQP_IS_HIERARCHICAL(work)){
-            const int m = work->m;
-            work->m = work->break_points[0];
-            daqp_activate_constraints(work);
-            work->m = m;
-        }
-        else
-            daqp_activate_constraints(work);
-    }
+    if(rebuild) daqp_reactivate_constraints(work);
     if(reduced) daqp_eq_restore(work);
 }
 
@@ -535,7 +510,7 @@ void free_daqp_workspace(DAQPWorkspace *work){
 
     free_daqp_bnb(work);
     free_daqp_avi(work);
-
+    free_daqp_hierarchy(work);
 }
 
 void free_daqp_avi(DAQPWorkspace* work){
@@ -610,15 +585,7 @@ void daqp_extract_result(DAQPResult* res, DAQPWorkspace* work){
     else if(DAQP_IS_HIERARCHICAL(work))
         res->nodes = 1;
     else
-        res->nodes = work->nh;
-}
-
-void daqp_extract_active_duals(DAQPResult* res, DAQPWorkspace* work){
-    int i;
-    if(res->lam == NULL) return;
-    for(i=0;i<work->m;i++) res->lam[i] = 0;
-    for(i=0;i<work->n_active;i++)
-        res->lam[work->WS[i]] = work->lam_star[i];
+        res->nodes = work->outer_iter;
 }
 
 void daqp_default_settings(DAQPSettings* settings){
@@ -698,41 +665,24 @@ int daqp_first_violating(c_float* x, c_float* A, c_float* bu, c_float* bl, int n
 // Sets the starting active-set (by modifying sense)
 // based on a primal iterate
 void daqp_primal_init_active(DAQPProblem* qp, c_float* x){
-    int i,disp;
-    c_float Ax, slack;
+    int i;
+    c_float val, slack; // val = (A*x)_i
     c_float tol= 1e-9;
 
     // For MIQPs, x is only used as an incumbent (see daqp_set_primal_start)
     for(i=0; i < qp->m; i++)
         if(qp->sense[i] & DAQP_BINARY) return;
 
-    // Simple constraints
-    for(i=0; i < qp->ms; i++){
+    for(i=0; i < qp->m; i++){
         if(qp->sense[i] & DAQP_IMMUTABLE) continue;
-        slack = x[i]- qp->bupper[i];
+        val = (i < qp->ms) ? x[i] : daqp_dot_inline(x,qp->A+(size_t)(i-qp->ms)*qp->n,qp->n);
+        slack = val - qp->bupper[i];
         if (slack < tol && slack > -tol){
             qp->sense[i] |= DAQP_ACTIVE;
             qp->sense[i] &= ~DAQP_LOWER;
         }
         else{
-            slack = x[i] - qp->blower[i];
-            if (slack < tol && slack > -tol){
-                qp->sense[i] |= DAQP_ACTIVE+DAQP_LOWER;
-            }
-        }
-    }
-
-    // General constraints
-    for(i=qp->ms, disp=0; i < qp->m; i++, disp+=qp->n){
-        if(qp->sense[i] & DAQP_IMMUTABLE) continue;
-        Ax = daqp_dot_inline(x,qp->A+disp,qp->n);
-        slack = Ax - qp->bupper[i];
-        if (slack < tol && slack > -tol){
-            qp->sense[i] |= DAQP_ACTIVE;
-            qp->sense[i] &= ~DAQP_LOWER;
-        }
-        else{
-            slack = Ax - qp->blower[i];
+            slack = val - qp->blower[i];
             if (slack < tol && slack > -tol){
                 qp->sense[i] |= DAQP_ACTIVE+DAQP_LOWER;
             }

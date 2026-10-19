@@ -6,6 +6,10 @@
 // Delay the extra projection work until ordinary proximal steps are slow.
 #define DAQP_PROX_FACE_START 16
 #define DAQP_PROX_FACE_STEPS 3
+// Lower eps (by 10, down to DAQP_PROX_EPS_MIN*max H_ii) if the proximal step has not
+// halved during the last DAQP_PROX_STALL_ITERS outer iterations on an unchanged working set
+#define DAQP_PROX_STALL_ITERS 20
+#define DAQP_PROX_EPS_MIN 1e-9
 
 static int prox_project_step(DAQPWorkspace* work, c_float eps);
 static int prox_step(DAQPWorkspace* work, c_float* s_prev, c_float eps, int projected);
@@ -38,8 +42,7 @@ int daqp_prox(DAQPWorkspace *work){
     c_float eta = work->settings->eta_prox;
     c_float eps;
 
-    // nh act as a counter for outer iterations
-    work->nh = 0;
+    work->outer_iter = 0;
 
     nx = work->n;
     is_lp = (work->Rinv == NULL && work->RinvD == NULL);
@@ -54,7 +57,7 @@ int daqp_prox(DAQPWorkspace *work){
     // A failed inner problem (often due to a small eps) is resolved with eps_max
     const int adaptive = !is_lp && !all_pd && work->avi == NULL &&
         work->prox_mask != NULL && work->n_prox < nx;
-    c_float eps_max = eps;
+    c_float eps_max = eps, eps_min = eps, dx_stall = -1; // eps_min = eps: not lowered
     int rescaled = 0;
     if(adaptive){
         c_float hmax = 0;
@@ -63,15 +66,16 @@ int daqp_prox(DAQPWorkspace *work){
             if(hii < 0) hii = -hii;
             if(hii > hmax) hmax = hii;
         }
-        // Reset an eps that an earlier solve has raised (as in daqp_update_Rinv)
+        // Reset an eps that an earlier solve has changed (as in daqp_update_Rinv)
         c_float eps0 = work->settings->eps_prox < 0 ? -work->settings->eps_prox : work->settings->eps_prox;
         if(eps0 < sqrt(work->settings->zero_tol)*hmax) eps0 = sqrt(work->settings->zero_tol)*hmax;
-        if(eps > 1.01*eps0){
+        if(eps > 1.01*eps0 || (work->settings->eps_prox < 0 && eps < 0.99*eps0)){
             prox_rescale(work,eps,eps0);
             eps = eps0;
             rescaled = 1;
         }
         eps_max = DAQP_PROX_EPS_MAX*hmax > eps ? DAQP_PROX_EPS_MAX*hmax : eps;
+        if(work->settings->eps_prox < 0) eps_min = DAQP_PROX_EPS_MIN*hmax; // Automatic eps
     }
 
     // A negative eta selects an automatic tolerance. Preserve the established
@@ -83,6 +87,14 @@ int daqp_prox(DAQPWorkspace *work){
         if(work->settings->dual_tol != DAQP_DEFAULT_DUAL_TOL &&
            0.1 * work->settings->dual_tol < eta)
             eta = 0.1 * work->settings->dual_tol;
+        // eta bounds the stationarity residual, so make it relative to a
+        // large linear cost (which is at most twice the scale of the KKT terms)
+        if(work->qp->f != NULL){
+            c_float fmax = DAQP_AUTO_ETA_FSCALE;
+            for(i = 0; i < nx; i++)
+                if(fabs(work->qp->f[i]) > fmax) fmax = fabs(work->qp->f[i]);
+            eta *= fmax/DAQP_AUTO_ETA_FSCALE;
+        }
     }
 
     while(total_iter < work->settings->iter_limit){
@@ -139,7 +151,7 @@ int daqp_prox(DAQPWorkspace *work){
          * Solve the (regularised) least-distance problem
          * ----------------------------------------------------------------*/
         work->u = work->x;
-        work->nh++;
+        work->outer_iter++;
         exitflag = daqp_ldp(work);
 
         total_iter += work->iterations;
@@ -149,6 +161,7 @@ int daqp_prox(DAQPWorkspace *work){
             prox_rescale(work,eps,eps_max);
             eps = eps_max;
             rescaled = 1;
+            eps_min = eps_max; // Not lowered again
             s_prev = -1;
             for(i = 0; i < nx; i++) work->x[i] = work->xold[i]; // The center
             continue;
@@ -192,6 +205,18 @@ int daqp_prox(DAQPWorkspace *work){
             break;
         }
 
+        // Slow progress: lower eps after this iteration (see DAQP_PROX_STALL_ITERS)
+        int stalled = 0;
+        if(eps > eps_min && work->outer_iter % DAQP_PROX_STALL_ITERS == 0){
+            c_float dx = 0;
+            for(i = 0; i < nx; i++){
+                max_diff = fabs(work->x[i] - work->xold[i]);
+                if(max_diff > dx) dx = max_diff;
+            }
+            stalled = work->iterations == 1 && dx_stall >= 0 && dx > 0.5*dx_stall;
+            dx_stall = dx;
+        }
+
         // Unchanged working set => accelerate by moving the center along the
         // step (relax the step for an AVI). Convergence is confirmed afterwards.
         // After many outer steps, also accelerate small working-set changes,
@@ -201,7 +226,7 @@ int daqp_prox(DAQPWorkspace *work){
         if(work->iterations != 1){ // The working set has changed
             s_prev = -1;
             projected = !is_lp && work->avi == NULL && work->settings->eps_prox < 0 &&
-                work->nh >= DAQP_PROX_FACE_START && work->iterations <= 3 &&
+                work->outer_iter >= DAQP_PROX_FACE_START && work->iterations <= 3 &&
                 prox_project_step(work,eps);
         }
         if((work->iterations == 1 || projected) && work->n_active < nx &&
@@ -220,6 +245,14 @@ int daqp_prox(DAQPWorkspace *work){
                 }
                 center_relaxed = step_flag;
             }
+        }
+        if(stalled){
+            const c_float eps_new = eps/10 > eps_min ? eps/10 : eps_min;
+            prox_rescale(work,eps,eps_new);
+            eps = eps_new;
+            rescaled = 1;
+            s_prev = -1;
+            dx_stall = -1;
         }
     }
 
@@ -351,11 +384,11 @@ static int prox_blocking_constraint(DAQPWorkspace* work, c_float* s, int* lower)
  * d. x is therefore moved to the minimizer along d, or to the first blocking
  * constraint, which is added to the working set (dependent ones are set aside).
  *
- * Returns 1 if x was moved, 0 otherwise, and DAQP_EXIT_UNBOUNDED for an LP
- * with an unblocked descent direction.
+ * Returns 1 if x was moved, 0 otherwise, and DAQP_EXIT_UNBOUNDED for an
+ * unblocked descent direction without curvature.
  * --------------------------------------------------------------------------*/
 static int prox_step(DAQPWorkspace* work, c_float* s_prev, c_float eps, int projected){
-    int i, k, ind, lower = 0, moved = 0, skipped = 0, first = 1, n_projections = 0;
+    int i, k, ind, lower = 0, moved = 0, blocked = 0, skipped = 0, first = 1, n_projections = 0;
     c_float s;
     while((s = prox_curvature_step(work)) >= 0){
         const int null_direction = s >= DAQP_INF;
@@ -386,7 +419,8 @@ static int prox_step(DAQPWorkspace* work, c_float* s_prev, c_float eps, int proj
                 for(k = 0; k < work->n; k++) work->x[k] += s*d[k];
                 moved = 1;
             }
-            else if(work->qp->H == NULL && !moved && !skipped)
+            // Dependent blocking constraints only block d through roundoff
+            else if(!blocked)
                 return DAQP_EXIT_UNBOUNDED;
             break;
         }
@@ -399,9 +433,10 @@ static int prox_step(DAQPWorkspace* work, c_float* s_prev, c_float eps, int proj
         else DAQP_SET_UPPER(ind);
         daqp_add_constraint(work, ind, lower ? -1.0 : 1.0);
         if(work->sing_ind == DAQP_EMPTY_IND){
+            blocked = 1;
             // Along a null direction of H, continue on the new face
             if(null_direction && work->settings->eps_prox < 0 &&
-                    work->nh >= DAQP_PROX_FACE_START &&
+                    work->outer_iter >= DAQP_PROX_FACE_START &&
                     n_projections++ < DAQP_PROX_FACE_STEPS &&
                     prox_project_step(work,eps)){
                 projected = 1;
