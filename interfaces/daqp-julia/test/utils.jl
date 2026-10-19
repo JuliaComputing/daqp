@@ -122,7 +122,7 @@ function generate_test_QP_eq(n,m,ms,nActive,neq,kappa)
     b = abs(r[i]-bupper[i]) <= abs(r[i]-blower[i]) ? bupper[i] : blower[i]
     bupper[i] = b
     blower[i] = b
-    sense[i] = Cint(DAQPBase.EQUALITY)
+    sense[i] = Cint(DyadDAQP.EQUALITY)
   end
 
   return xref,H,f,A,bupper,blower,sense
@@ -153,7 +153,7 @@ function generate_test_MIQP(n,m,ms,nb)
   bupper[1:nb] .= 1.0;
   blower[1:nb] .= 0.0;
   sense = zeros(Cint,m);
-  sense[1:nb] .= Cint(DAQPBase.BINARY);
+  sense[1:nb] .= Cint(DyadDAQP.BINARY);
 
   # Cardinality constraint sum(x[1:nb]) <= nb/2: the binaries compete, so the
   # relaxation is fractional and the search has to branch and backtrack.

@@ -1,16 +1,16 @@
 using LinearAlgebra
 using Random
-using DAQPBase
-using DAQP_jll
+using DyadDAQP
+using DyadDAQP_jll
 include(joinpath(dirname(@__FILE__), "utils.jl"))
 global templib
 
 # Use local libdaqp if available
-_libdaqp = joinpath(pkgdir(DAQPBase),"libdaqp."*Libc.Libdl.dlext)
+_libdaqp = joinpath(pkgdir(DyadDAQP),"libdaqp."*Libc.Libdl.dlext)
 if isfile(_libdaqp)
     local_lib = true
     @info "Using local libdaqp"
-    DAQP_jll.libdaqp = _libdaqp
+    DyadDAQP_jll.libdaqp = _libdaqp
 else
     local_lib = false
 end
@@ -30,16 +30,16 @@ tol = 1e-4
     end
     # Test quadprog interface by passing settings
     xref,H,f,A,bupper,blower,sense = generate_test_QP(n,m,ms,nAct,kappa);
-    s = settings(DAQPBase.Model(),Dict(:iter_limit=>1))
+    s = settings(DyadDAQP.Model(),Dict(:iter_limit=>1))
     x,fval,exitflag,info = quadprog(H,f,A,bupper,blower,sense;settings=s)
     @test exitflag == -4
 end
 
 @testset "Zero-row equality" begin
     exitflag, _ = setup(
-        DAQPBase.Model(), ones(1, 1), zeros(1), zeros(1, 1), [1.0], [1.0],
-        Cint[DAQPBase.EQUALITY])
-    @test exitflag == DAQPBase.INFEASIBLE
+        DyadDAQP.Model(), ones(1, 1), zeros(1), zeros(1, 1), [1.0], [1.0],
+        Cint[DyadDAQP.EQUALITY])
+    @test exitflag == DyadDAQP.INFEASIBLE
 end
 
 @testset "Quadprog (one-sided)" begin
@@ -54,7 +54,7 @@ end
 @testset "Quadprog (C)" begin
     for nQP in 1:10
         xref,H,f,A,bupper,blower,sense = generate_test_QP(n,m,ms,nAct,kappa);
-        x,fval,exitflag,info = DAQPBase.quadprog(DAQPBase.QPj(H,f,A,bupper,blower,sense));
+        x,fval,exitflag,info = DyadDAQP.quadprog(DyadDAQP.QPj(H,f,A,bupper,blower,sense));
         @test norm(xref-x) < tol;
     end
 end
@@ -96,7 +96,7 @@ end
     ]
     x_cycle,_,ef_cycle,info_cycle = linprog(
         f_cycle, A_cycle, bu_cycle, bl_cycle, zeros(Cint, 7))
-    @test ef_cycle == DAQPBase.OPTIMAL
+    @test ef_cycle == DyadDAQP.OPTIMAL
     @test norm(x_cycle-x_cycle_ref, Inf) < tol
     @test info_cycle.iterations <= 20
 end
@@ -120,9 +120,9 @@ end
     blower = [-1e30; -1e30; 1.0]
     sense = zeros(Cint,3)
     _,_,exitflag,_ = quadprog(H,f,A,bupper,blower,sense)
-    @test exitflag == DAQPBase.UNBOUNDED
+    @test exitflag == DyadDAQP.UNBOUNDED
     _,_,exitflag,_ = linprog(f,A,bupper,blower,sense)
-    @test exitflag == DAQPBase.UNBOUNDED
+    @test exitflag == DyadDAQP.UNBOUNDED
 
     # Bundle master problem (issue #222): x1 >= 0 and x5 >= 0 are implied by
     # the equalities (x1 = x5 = 1), but block the unbounded direction through
@@ -152,30 +152,30 @@ end
     sense = zeros(Cint,n+8)
     eqs = [2,3,11,12,13,15,16,17,18,19,20,29,30,31,32,33,34,35,36]
     bupper[eqs] = blower[eqs]
-    sense[eqs] .= DAQPBase.EQUALITY
+    sense[eqs] .= DyadDAQP.EQUALITY
     _,_,exitflag,info = quadprog(H,f,A,bupper,blower,sense)
-    @test exitflag == DAQPBase.UNBOUNDED
+    @test exitflag == DyadDAQP.UNBOUNDED
     @test info.iterations < 100
 end
 
 @testset "Quadprog (JL)" begin
-    qpj = DAQPBase.QPj()
-    for selection_rule in [DAQPBase.DANTZIG, DAQPBase.BLAND]
+    qpj = DyadDAQP.QPj()
+    for selection_rule in [DyadDAQP.DANTZIG, DyadDAQP.BLAND]
         for nQP in 1:10
             xref,H,f,A,bupper,blower,sense = generate_test_QP(20,100,0,16,1e2);
-            x,lam,AS,J,iter= DAQPBase.daqp_jl(H,f,[A;-A],[bupper;-blower],[sense;sense],Int64[];selection_rule);
+            x,lam,AS,J,iter= DyadDAQP.daqp_jl(H,f,[A;-A],[bupper;-blower],[sense;sense],Int64[];selection_rule);
             @test norm(xref-x) < tol;
         end
     end
     # Test warm start
     xref,H,f,A,bupper,blower,sense = generate_test_QP(20,100,0,16,1e2);
-    x,lam,AS,J,iter= DAQPBase.daqp_jl(H,f,[A;-A],[bupper;-blower],[sense;sense],Int64[1]);
+    x,lam,AS,J,iter= DyadDAQP.daqp_jl(H,f,[A;-A],[bupper;-blower],[sense;sense],Int64[1]);
     @test norm(xref-x) < tol;
     # Test infeasible problem
-    x,lam,AS,J,iter= DAQPBase.daqp_jl([1.0 0; 0 1],zeros(2),[1.0 0;-1 0],[1;-2],zeros(Cint,2),Int64[]);
+    x,lam,AS,J,iter= DyadDAQP.daqp_jl([1.0 0; 0 1],zeros(2),[1.0 0;-1 0],[1;-2],zeros(Cint,2),Int64[]);
     @test isinf(J)
     # Test unconstrained problem
-    x,lam,AS,J,iter= DAQPBase.daqp_jl((H=[1.0 0; 0 1], f=zeros(2),
+    x,lam,AS,J,iter= DyadDAQP.daqp_jl((H=[1.0 0; 0 1], f=zeros(2),
                                        A=[1.0 0;0 1], b=[1;1],
                                        senses=zeros(Cint,2)),Int64[]);
     @test isempty(AS)
@@ -195,8 +195,8 @@ end
         bupper[1:nb].=1
         blower[1:nb].=0
         sense = zeros(Cint,m)
-        sense[1:nb].=DAQPBase.BINARY
-        x,fval,exitflag,info = DAQPBase.quadprog(H,f,A,bupper,blower,sense);
+        sense[1:nb].=DyadDAQP.BINARY
+        x,fval,exitflag,info = DyadDAQP.quadprog(H,f,A,bupper,blower,sense);
         @test exitflag == 1 # was able to solve problem
         @test all((abs.(x[1:nb].-1.0).<ϵb) .| (abs.(x[1:nb]).<ϵb)) # is binary feasible
     end
@@ -206,8 +206,8 @@ end
     A = [1.0 2 3;  1 1 0]
     bu = [1.0;1;1;1e30;1e30]
     bl = [0.0;0;0;4;1]
-    sense = Cint.([DAQPBase.BINARY;DAQPBase.BINARY;DAQPBase.BINARY;0;0])
-    x,_,_,info = DAQPBase.quadprog(H,f,A,bu,bl,sense)
+    sense = Cint.([DyadDAQP.BINARY;DyadDAQP.BINARY;DyadDAQP.BINARY;0;0])
+    x,_,_,info = DyadDAQP.quadprog(H,f,A,bu,bl,sense)
     @test norm(x-[0;1;1]) < tol
 
     # A binary constraint at a zero-dual endpoint is already integer feasible
@@ -217,45 +217,45 @@ end
     fdeg = zeros(ndeg)
     bdeg_u = ones(ndeg)
     bdeg_l = zeros(ndeg)
-    sdeg = fill(Cint(DAQPBase.BINARY), ndeg)
-    xdeg, _, efdeg, ideg = DAQPBase.quadprog(
+    sdeg = fill(Cint(DyadDAQP.BINARY), ndeg)
+    xdeg, _, efdeg, ideg = DyadDAQP.quadprog(
         Hdeg, fdeg, zeros(0, ndeg), bdeg_u, bdeg_l, sdeg)
-    @test efdeg == DAQPBase.OPTIMAL
+    @test efdeg == DyadDAQP.OPTIMAL
     @test norm(xdeg, Inf) < tol
     @test ideg.nodes == 1
 
     # Cover the same zero-dual case for general binary constraints.
-    xgen, _, efgen, igen = DAQPBase.quadprog(
+    xgen, _, efgen, igen = DyadDAQP.quadprog(
         Hdeg, fdeg, Hdeg, bdeg_u, bdeg_l, sdeg)
-    @test efgen == DAQPBase.OPTIMAL
+    @test efgen == DyadDAQP.OPTIMAL
     @test norm(xgen, Inf) < tol
     @test igen.nodes == 1
 
     # Iterative refinement uses xldl/zldl as scratch and must invalidate the
     # cached CSP substitution. Cleanup may then reuse an unchanged prefix.
-    dreuse = DAQPBase.Model()
+    dreuse = DyadDAQP.Model()
     Hreuse = Matrix{Float64}(I, 2, 2)
     Areuse = ones(1, 2)
     bureuse = [1.0, 1.0, 1.0]
     blreuse = [0.0, 0.0, 1.0]
-    sreuse = Cint[DAQPBase.BINARY, DAQPBase.BINARY, DAQPBase.EQUALITY]
-    DAQPBase.setup(
+    sreuse = Cint[DyadDAQP.BINARY, DyadDAQP.BINARY, DyadDAQP.EQUALITY]
+    DyadDAQP.setup(
         dreuse, Hreuse, zeros(2), Areuse, bureuse, blreuse, sreuse)
-    DAQPBase.solve(dreuse)
-    wsreuse = unsafe_load(Ptr{DAQPBase.Workspace}(dreuse.work))
+    DyadDAQP.solve(dreuse)
+    wsreuse = unsafe_load(Ptr{DyadDAQP.Workspace}(dreuse.work))
     @test wsreuse.n_active > 0
-    reuse_field = findfirst(==(:reuse_ind), fieldnames(DAQPBase.Workspace))
-    reuse_offset = fieldoffset(DAQPBase.Workspace, reuse_field)
+    reuse_field = findfirst(==(:reuse_ind), fieldnames(DyadDAQP.Workspace))
+    reuse_offset = fieldoffset(DyadDAQP.Workspace, reuse_field)
     reuse_ptr = Ptr{Cint}(Ptr{UInt8}(dreuse.work) + reuse_offset)
     unsafe_store!(reuse_ptr, wsreuse.n_active)
-    ccall((:daqp_refine_active, DAQPBase.libdaqp), Cvoid,
-          (Ptr{DAQPBase.Workspace},), dreuse.work)
-    @test unsafe_load(Ptr{DAQPBase.Workspace}(dreuse.work)).reuse_ind == 0
+    ccall((:daqp_refine_active, DyadDAQP.libdaqp), Cvoid,
+          (Ptr{DyadDAQP.Workspace},), dreuse.work)
+    @test unsafe_load(Ptr{DyadDAQP.Workspace}(dreuse.work)).reuse_ind == 0
 
     unsafe_store!(reuse_ptr, wsreuse.n_active)
-    ccall((:daqp_node_cleanup_workspace, DAQPBase.libdaqp), Cvoid,
-          (Cint, Ptr{DAQPBase.Workspace}), wsreuse.n_active, dreuse.work)
-    @test unsafe_load(Ptr{DAQPBase.Workspace}(dreuse.work)).reuse_ind ==
+    ccall((:daqp_node_cleanup_workspace, DyadDAQP.libdaqp), Cvoid,
+          (Cint, Ptr{DyadDAQP.Workspace}), wsreuse.n_active, dreuse.work)
+    @test unsafe_load(Ptr{DyadDAQP.Workspace}(dreuse.work)).reuse_ind ==
           wsreuse.n_active
 
     # Reusing the workspace for a new f and b (e.g., a new parameter in MPC)
@@ -265,8 +265,8 @@ end
     Hr = Lr'*Lr + 0.5I
     Ar = randn(mar,nr)
     sr = zeros(Cint,msr+mar)
-    sr[1:nbr] .= DAQPBase.BINARY
-    sr[msr+1:msr+2] .= DAQPBase.EQUALITY
+    sr[1:nbr] .= DyadDAQP.BINARY
+    sr[msr+1:msr+2] .= DyadDAQP.EQUALITY
     function rand_rhs()
         bu = [ones(msr); 1 .+ rand(mar)]
         bl = [zeros(msr); -1 .- rand(mar)]
@@ -274,21 +274,21 @@ end
         return bu, bl
     end
     bur, blr = rand_rhs()
-    dr = DAQPBase.Model()
-    DAQPBase.setup(dr,Hr,randn(nr),Ar,bur,blr,sr)
+    dr = DyadDAQP.Model()
+    DyadDAQP.setup(dr,Hr,randn(nr),Ar,bur,blr,sr)
     for k = 1:20
         fr = 3*randn(nr)
         bur, blr = rand_rhs()
-        DAQPBase.update(dr,nothing,fr,nothing,bur,blr)
-        xr,fvalr,efr,_ = DAQPBase.solve(dr)
-        xq,fvalq,efq,_ = DAQPBase.quadprog(Hr,fr,Ar,bur,blr,copy(sr))
+        DyadDAQP.update(dr,nothing,fr,nothing,bur,blr)
+        xr,fvalr,efr,_ = DyadDAQP.solve(dr)
+        xq,fvalq,efq,_ = DyadDAQP.quadprog(Hr,fr,Ar,bur,blr,copy(sr))
         @test efr == efq
         if efq == 1
             @test norm(Ar[1:2,:]*xr - bur[msr+1:msr+2]) < tol
             @test abs(fvalr-fvalq) < tol*(1+abs(fvalq))
         end
         # Only the equality constraints remain active between solves
-        @test unsafe_load(Ptr{DAQPBase.Workspace}(dr.work)).n_active == 2
+        @test unsafe_load(Ptr{DyadDAQP.Workspace}(dr.work)).n_active == 2
     end
 
 end
@@ -298,22 +298,22 @@ end
     Random.seed!(1234)
     nbi = 10
     # A huge relative suboptimality tolerance prunes the root given an incumbent
-    s_prune = settings(DAQPBase.Model(), Dict(:rel_subopt => 1e6))
+    s_prune = settings(DyadDAQP.Model(), Dict(:rel_subopt => 1e6))
     # Dense, diagonal, and dense Hessian with an equality constraint
     for (diagH, with_eq) in [(false,false), (false,false), (true,false), (false,true)]
         H,f,A,bu,bl,sense = generate_test_MIQP(20,60,20,nbi)
         diagH && (H = Matrix(Diagonal(diag(H))))
         if with_eq # Origin remains feasible
-            sense[end] = DAQPBase.EQUALITY
+            sense[end] = DyadDAQP.EQUALITY
             bu[end] = bl[end] = 0.0
         end
         xopt,fopt,ef,info = quadprog(H,f,A,bu,bl,sense)
-        @test ef == DAQPBase.OPTIMAL
+        @test ef == DyadDAQP.OPTIMAL
         tolf = 1e-6*(1+abs(fopt))
 
         # Optimal incumbent (also seeds the root with a warm-start working set)
         x1,f1,ef1,info1 = quadprog(H,f,A,bu,bl,sense; primal_start=xopt)
-        @test ef1 == DAQPBase.OPTIMAL
+        @test ef1 == DyadDAQP.OPTIMAL
         @test abs(f1-fopt) < tolf
         @test norm(x1-xopt) < 1e-6
 
@@ -321,15 +321,15 @@ end
         xp,_,_,_ = quadprog(H,f+30randn(rng_inc,20),A,bu,bl,sense)
         bf, lf, sf = copy(bu), copy(bl), copy(sense)
         bf[1:nbi] .= round.(xp[1:nbi]); lf[1:nbi] .= bf[1:nbi]
-        sf[1:nbi] .= DAQPBase.EQUALITY
+        sf[1:nbi] .= DyadDAQP.EQUALITY
         xinc,_,efinc,_ = quadprog(H,f,A,bf,lf,sf)
-        if efinc == DAQPBase.OPTIMAL
+        if efinc == DyadDAQP.OPTIMAL
             x2,f2,ef2,info2 = quadprog(H,f,A,bu,bl,sense; primal_start=xinc)
-            @test ef2 == DAQPBase.OPTIMAL
+            @test ef2 == DyadDAQP.OPTIMAL
             @test abs(f2-fopt) < tolf
             # The incumbent is returned when nothing better is found
             x5,_,ef5,info5 = quadprog(H,f,A,bu,bl,sense; primal_start=xinc, settings=s_prune)
-            @test ef5 == DAQPBase.OPTIMAL
+            @test ef5 == DyadDAQP.OPTIMAL
             @test info5.nodes == 1
             @test norm(x5-xinc) < 1e-6
         end
@@ -338,22 +338,22 @@ end
         for perturb! in [x->(x[1] = 0.5), x->(x[end] += 1e3)]
             xbad = copy(xopt); perturb!(xbad)
             x3,f3,ef3,info3 = quadprog(H,f,A,bu,bl,sense; primal_start=xbad)
-            @test ef3 == DAQPBase.OPTIMAL
+            @test ef3 == DyadDAQP.OPTIMAL
             @test abs(f3-fopt) < tolf
             @test info3.nodes == info.nodes
         end
 
         # Dual warm start
         x4,f4,ef4,_ = quadprog(H,f,A,bu,bl,sense; dual_start=info.λ)
-        @test ef4 == DAQPBase.OPTIMAL
+        @test ef4 == DyadDAQP.OPTIMAL
         @test abs(f4-fopt) < tolf
 
         # Repeated solves must not be affected by the previous working set
-        d = DAQPBase.Model()
-        DAQPBase.setup(d,H,f,A,bu,bl,sense; primal_start=xopt)
+        d = DyadDAQP.Model()
+        DyadDAQP.setup(d,H,f,A,bu,bl,sense; primal_start=xopt)
         for i in 1:2
-            _,fd,efd,_ = DAQPBase.solve(d)
-            @test efd == DAQPBase.OPTIMAL
+            _,fd,efd,_ = DyadDAQP.solve(d)
+            @test efd == DyadDAQP.OPTIMAL
             @test abs(fd-fopt) < tolf
         end
     end
@@ -367,35 +367,35 @@ end
     A = [1.0 -1.0 0.0]
     bu = [1.0, 1e30, 1e30, 0.6]
     bl = [0.0, 0.0, -1e30, -1e30]
-    sense = Cint[DAQPBase.BINARY, 0, 0, 0]
+    sense = Cint[DyadDAQP.BINARY, 0, 0, 0]
     for p in (0.0, 1.0), rel in (0.0, 1e-3, 0.5)
         H = Diagonal([1.0, δ, 1.0])
         f = [-0.6, 1.0, p]
-        s = settings(DAQPBase.Model(), Dict(:rel_subopt => rel))
+        s = settings(DyadDAQP.Model(), Dict(:rel_subopt => rel))
         x,fval,ef,_ = quadprog(Matrix(H),f,A,bu,bl,sense; settings=s)
-        @test ef == DAQPBase.OPTIMAL
+        @test ef == DyadDAQP.OPTIMAL
         @test abs(x[1]) < 1e-6
         @test abs(fval+0.5p^2) < 1e-6
     end
     # fval_bound refers to the reported objective
     H, f = [1.0 0 0; 0 δ 0; 0 0 1.0], [-0.6, 1.0, 1.0]
-    for (fb, ef_exp) in ((-0.4, DAQPBase.OPTIMAL), (-0.6, DAQPBase.INFEASIBLE))
-        s = settings(DAQPBase.Model(), Dict(:fval_bound => fb))
+    for (fb, ef_exp) in ((-0.4, DyadDAQP.OPTIMAL), (-0.6, DyadDAQP.INFEASIBLE))
+        s = settings(DyadDAQP.Model(), Dict(:fval_bound => fb))
         x,fval,ef,_ = quadprog(H,f,A,bu,bl,sense; settings=s)
         @test ef == ef_exp
-        ef == DAQPBase.OPTIMAL && @test abs(fval+0.5) < 1e-6
+        ef == DyadDAQP.OPTIMAL && @test abs(fval+0.5) < 1e-6
     end
     # ... also when equality elimination removes a part of the objective (w = 3 adds 4.5)
     He = Matrix(Diagonal([1.0, δ, 1.0, 1.0]))
     fe = [-0.6, 1.0, 1.0, 0.0]
     Ae = [1.0 -1.0 0.0 0.0; 0.0 0.0 0.0 1.0]
     bue, ble = [1.0, 1e30, 1e30, 1e30, 0.6, 3.0], [0.0, 0.0, -1e30, -1e30, -1e30, 3.0]
-    sensee = Cint[DAQPBase.BINARY, 0, 0, 0, 0, DAQPBase.EQUALITY]
-    for eqr in (-1, 1), (fb, ef_exp) in ((4.01, DAQPBase.OPTIMAL), (3.99, DAQPBase.INFEASIBLE))
-        s = settings(DAQPBase.Model(), Dict(:fval_bound => fb, :eq_reduction => eqr))
+    sensee = Cint[DyadDAQP.BINARY, 0, 0, 0, 0, DyadDAQP.EQUALITY]
+    for eqr in (-1, 1), (fb, ef_exp) in ((4.01, DyadDAQP.OPTIMAL), (3.99, DyadDAQP.INFEASIBLE))
+        s = settings(DyadDAQP.Model(), Dict(:fval_bound => fb, :eq_reduction => eqr))
         x,fval,ef,_ = quadprog(He,fe,Ae,bue,ble,sensee; settings=s)
         @test ef == ef_exp
-        ef == DAQPBase.OPTIMAL && @test abs(fval-4.0) < 1e-6
+        ef == DyadDAQP.OPTIMAL && @test abs(fval-4.0) < 1e-6
     end
 
     # Random MIQPs: the result is within the allowed suboptimality
@@ -403,11 +403,11 @@ end
     for _ in 1:20
         H,f,A,bu,bl,sense = generate_test_MIQP(20,60,20,10)
         _,fopt,ef,_ = quadprog(H,f,A,bu,bl,sense)
-        @test ef == DAQPBase.OPTIMAL
+        @test ef == DyadDAQP.OPTIMAL
         for (rel,abs_) in ((1e-2,0.0), (0.0,1.0), (1e-1,1.0))
-            s = settings(DAQPBase.Model(), Dict(:rel_subopt => rel, :abs_subopt => abs_))
+            s = settings(DyadDAQP.Model(), Dict(:rel_subopt => rel, :abs_subopt => abs_))
             _,fs,efs,_ = quadprog(H,f,A,bu,bl,sense; settings=s)
-            @test efs == DAQPBase.OPTIMAL
+            @test efs == DyadDAQP.OPTIMAL
             @test fopt-1e-6 <= fs <= fopt + abs_ + rel*abs(fs) + 1e-6*(1+abs(fopt))
         end
     end
@@ -424,15 +424,15 @@ end
     buu = [ones(nbu); fill(2.0, nu - nbu); 2.6; 0; 0.1]
     blu = [zeros(nbu); fill(-2.0, nu - nbu); -1e30; 0; 0.1]
     # Binary constraints on the variables first:nbu
-    sense_from(first) = Cint[[i >= first ? DAQPBase.BINARY : 0 for i in 1:nbu];
-                             zeros(Cint, nu - nbu + 1); DAQPBase.EQUALITY; DAQPBase.EQUALITY]
+    sense_from(first) = Cint[[i >= first ? DyadDAQP.BINARY : 0 for i in 1:nbu];
+                             zeros(Cint, nu - nbu + 1); DyadDAQP.EQUALITY; DyadDAQP.EQUALITY]
     dist(x) = min.(abs.(x), abs.(x .- 1))
-    for eq_reduction in (DAQPBase.DAQP_EQ_REDUCTION_OFF, DAQPBase.DAQP_EQ_REDUCTION_ON)
+    for eq_reduction in (DyadDAQP.DAQP_EQ_REDUCTION_OFF, DyadDAQP.DAQP_EQ_REDUCTION_ON)
         s = Dict{Symbol,Any}(:eq_reduction => Cint(eq_reduction))
         function setup_model(sense)
-            d = DAQPBase.Model()
-            DAQPBase.settings(d, s)
-            DAQPBase.setup(d, Hu, fu, Au, buu, blu, sense)
+            d = DyadDAQP.Model()
+            DyadDAQP.settings(d, s)
+            DyadDAQP.setup(d, Hu, fu, Au, buu, blu, sense)
             return d
         end
         d = setup_model(sense_from(1))
@@ -440,10 +440,10 @@ end
         # Relax two binary constraints, relax all, and restore them
         for first in (1, 3, nbu + 1, 1)
             sense = sense_from(first)
-            DAQPBase.update(d, nothing, nothing, nothing, nothing, nothing, sense)
-            x, _, exitflag, info = DAQPBase.solve(d)
-            xr, _, exitflagr, infor = DAQPBase.solve(setup_model(sense))
-            @test exitflag == exitflagr == DAQPBase.OPTIMAL
+            DyadDAQP.update(d, nothing, nothing, nothing, nothing, nothing, sense)
+            x, _, exitflag, info = DyadDAQP.solve(d)
+            xr, _, exitflagr, infor = DyadDAQP.solve(setup_model(sense))
+            @test exitflag == exitflagr == DyadDAQP.OPTIMAL
             @test info.nodes == infor.nodes
             @test norm(x - xr) < 1e-8
             @test all(dist(x[first:nbu]) .< 1e-8)
@@ -458,26 +458,26 @@ end
 @testset "BnB root warm start" begin
     Random.seed!(4321)
     H,f,A,bu,bl,sense = generate_test_MIQP(20,60,20,10)
-    d = DAQPBase.Model()
-    DAQPBase.setup(d,H,f,A,bu,bl,sense)
-    x1,f1,ef1,info1 = DAQPBase.solve(d)
-    @test ef1 == DAQPBase.OPTIMAL
+    d = DyadDAQP.Model()
+    DyadDAQP.setup(d,H,f,A,bu,bl,sense)
+    x1,f1,ef1,info1 = DyadDAQP.solve(d)
+    @test ef1 == DyadDAQP.OPTIMAL
     # The root is warm started by the previous root working set
-    x2,f2,ef2,info2 = DAQPBase.solve(d)
-    @test ef2 == DAQPBase.OPTIMAL
+    x2,f2,ef2,info2 = DyadDAQP.solve(d)
+    @test ef2 == DyadDAQP.OPTIMAL
     @test abs(f2-f1) < 1e-6*(1+abs(f1))
     @test info2.iterations < info1.iterations
     # Resetting the workspace restores a cold root
-    DAQPBase.reset(d)
-    x3,f3,ef3,info3 = DAQPBase.solve(d)
-    @test ef3 == DAQPBase.OPTIMAL
+    DyadDAQP.reset(d)
+    x3,f3,ef3,info3 = DyadDAQP.solve(d)
+    @test ef3 == DyadDAQP.OPTIMAL
     @test abs(f3-f1) < 1e-6*(1+abs(f1))
     @test info3.iterations == info1.iterations
 end
 
 @testset "Model interface" begin
     # Setup model and solve problem
-    d = DAQPBase.Model()
+    d = DyadDAQP.Model()
     xref,H,f,A,bupper,blower,sense = generate_test_QP(n,m,ms,nAct,kappa)
     setup(d,H,f,A,bupper,blower,sense)
     x,fval,exitflag,info = solve(d)
@@ -500,16 +500,16 @@ end
     update(d,H,f,A,bupper,blower,sense)
     x,fval,exitflag,info = solve(d)
     @test norm(xref-x) < tol
-    DAQPBase.delete!(d); # Test manually running destructor
+    DyadDAQP.delete!(d); # Test manually running destructor
 end
 
 @testset "C LDP interface" begin
     # Setup model and solve problem
     n = 10; m = 50; ms = 5; nAct =0;
     xref,H,f,A,bupper,blower,sense = generate_test_QP(n,m,ms,nAct,kappa)
-    p=DAQPBase.setup_c_workspace(n)
+    p=DyadDAQP.setup_c_workspace(n)
     A = A'[:,:] # since row major...
-    DAQPBase.init_c_workspace_ldp(p,A,bupper,blower,sense;max_radius=1e30)
+    DyadDAQP.init_c_workspace_ldp(p,A,bupper,blower,sense;max_radius=1e30)
     @test isfeasible(p,m,ms)
     buold = bupper[1]
     bupper[1] = -1e30 #Make trivially infeasible
@@ -520,9 +520,9 @@ end
     settings(p,Dict(:iter_limit => 1e4))
     @test isfeasible(p,m,ms;validate=false)
 
-    work = unsafe_load(Ptr{DAQPBase.Workspace}(p));
+    work = unsafe_load(Ptr{DyadDAQP.Workspace}(p));
     @test work.n == n
-    DAQPBase.free_c_workspace(p)
+    DyadDAQP.free_c_workspace(p)
 end
 
 @testset "Individual soft weights" begin
@@ -531,44 +531,44 @@ end
     A = zeros(0, 1)
     bupper = [0.0]
     blower = [-1e30]
-    sense = Cint[DAQPBase.SOFT]
-    d = DAQPBase.Model()
-    DAQPBase.settings(d, Dict(:rho_soft => 0.5, :w_soft => 2.0))
-    DAQPBase.setup(d, H, f, A, bupper, blower, sense)
+    sense = Cint[DyadDAQP.SOFT]
+    d = DyadDAQP.Model()
+    DyadDAQP.settings(d, Dict(:rho_soft => 0.5, :w_soft => 2.0))
+    DyadDAQP.setup(d, H, f, A, bupper, blower, sense)
 
-    x, _, exitflag, info = DAQPBase.solve(d)
+    x, _, exitflag, info = DyadDAQP.solve(d)
     @test exitflag == 2
     @test x[1] ≈ 8/3 atol=1e-10
     @test info.λ[1] ≈ 22/3 atol=1e-10
 
-    DAQPBase.settings(d, Dict(:w_soft => 3.0))
-    x, _, exitflag, _ = DAQPBase.solve(d)
+    DyadDAQP.settings(d, Dict(:w_soft => 3.0))
+    x, _, exitflag, _ = DyadDAQP.solve(d)
     @test exitflag == 2
     @test x[1] ≈ 7/3 atol=1e-10
-    DAQPBase.settings(d, Dict(:w_soft => 2.0))
-    x, _, exitflag, _ = DAQPBase.solve(d)
+    DyadDAQP.settings(d, Dict(:w_soft => 2.0))
+    x, _, exitflag, _ = DyadDAQP.solve(d)
     @test exitflag == 2
     @test x[1] ≈ 8/3 atol=1e-10
 
     # First-time allocation after a solve must invalidate the factorization.
-    DAQPBase.soft_weights(d; rho_u=[0.1])
-    x, _, exitflag, info = DAQPBase.solve(d)
+    DyadDAQP.soft_weights(d; rho_u=[0.1])
+    x, _, exitflag, info = DyadDAQP.solve(d)
     @test exitflag == 2
     @test x[1] ≈ 8/11 atol=1e-10
     @test info.λ[1] ≈ 102/11 atol=1e-10
 
     # The same applies to later updates of an allocated weight array.
-    DAQPBase.soft_weights(d; rho_u=[0.2])
-    x, _, exitflag, info = DAQPBase.solve(d)
+    DyadDAQP.soft_weights(d; rho_u=[0.2])
+    x, _, exitflag, info = DyadDAQP.solve(d)
     @test exitflag == 2
     @test x[1] ≈ 4/3 atol=1e-10
     @test info.λ[1] ≈ 26/3 atol=1e-10
 
-    @test_throws DimensionMismatch DAQPBase.soft_weights(d; rho_u=[0.1, 0.2])
+    @test_throws DimensionMismatch DyadDAQP.soft_weights(d; rho_u=[0.1, 0.2])
 
     # Code generation must retain the individual weight arrays.
     srcdir = tempname()
-    DAQPBase.codegen(d, dir=srcdir)
+    DyadDAQP.codegen(d, dir=srcdir)
     generated = read(joinpath(srcdir, "daqp_workspace.c"), String)
     @test occursin("c_float daqp_rho_us[1]", generated)
     @test occursin("daqp_rho_ls, daqp_rho_us, daqp_w_ls, daqp_w_us", generated)
@@ -578,11 +578,11 @@ end
 @testset "Code generation" begin
     n = 5; m = 5; ms = 5; nAct =2;
     xref,H,f,A,bupper,blower,sense = generate_test_QP(n,m,ms,nAct,kappa)
-    sense[1] = DAQPBase.BINARY
-    d = DAQPBase.Model()
-    DAQPBase.setup(d,H,f,A,bupper,blower,sense)
+    sense[1] = DyadDAQP.BINARY
+    d = DyadDAQP.Model()
+    DyadDAQP.setup(d,H,f,A,bupper,blower,sense)
     srcdir = tempname();
-    DAQPBase.codegen(d,dir=srcdir,src=!local_lib)
+    DyadDAQP.codegen(d,dir=srcdir,src=!local_lib)
     local_lib && get_local_sources(srcdir)
     src = [f for f in readdir(srcdir) if last(f,1) == "c"]
     if(!isnothing(Sys.which("gcc")))
@@ -594,17 +594,17 @@ end
 
     # Try to also get global source...
     try
-        DAQPBase.codegen(d,dir=srcdir,src=true)
+        DyadDAQP.codegen(d,dir=srcdir,src=true)
         @test isfile(joinpath(srcdir,"daqp.c"))
         rm(srcdir,recursive=true)
     catch
     end
 
     # Test special case with diagonal H
-    d = DAQPBase.Model()
-    DAQPBase.setup(d,diagm(5*ones(n)),f,A,bupper,blower,sense)
+    d = DyadDAQP.Model()
+    DyadDAQP.setup(d,diagm(5*ones(n)),f,A,bupper,blower,sense)
     srcdir = tempname();
-    DAQPBase.codegen(d,dir=srcdir,src=!local_lib)
+    DyadDAQP.codegen(d,dir=srcdir,src=!local_lib)
     local_lib && get_local_sources(srcdir)
     src = [f for f in readdir(srcdir) if last(f,1) == "c"]
     if(!isnothing(Sys.which("gcc")))
@@ -621,14 +621,14 @@ end
     bl = [-ones(3);-1e30;0.5;10]
     sense = zeros(Cint,6)
     xref = [1; 0.5; -1]
-    d = DAQPBase.Model()
-    DAQPBase.setup(d,zeros(0,0),zeros(0),A,bu,bl,sense;break_points = [3;4;5;6])
+    d = DyadDAQP.Model()
+    DyadDAQP.setup(d,zeros(0,0),zeros(0),A,bu,bl,sense;break_points = [3;4;5;6])
     x,fval,exitflag,info = solve(d)
     @test norm(xref-x) < tol
 
     # Test codegen
     srcdir = tempname();
-    DAQPBase.codegen(d,dir=srcdir,src=!local_lib)
+    DyadDAQP.codegen(d,dir=srcdir,src=!local_lib)
     local_lib && get_local_sources(srcdir)
     src = [f for f in readdir(srcdir) if last(f,1) == "c"]
 
@@ -637,7 +637,7 @@ end
         run(Cmd(`gcc -lm -fPIC -O3 -msse3 -xc -shared -o $testlib $src`; dir=srcdir))
         @test isfile(joinpath(srcdir,testlib))
         global templib = joinpath(srcdir,testlib)
-        daqp_work_ptr = cglobal((:daqp_work,templib),DAQPBase.Workspace)
+        daqp_work_ptr = cglobal((:daqp_work,templib),DyadDAQP.Workspace)
         ws = unsafe_load(daqp_work_ptr)
 
         # Setup correct LDP
@@ -650,8 +650,8 @@ end
 
         # Solve
         lambda = zeros(ws.m)
-        exitflag = ccall((:daqp_hiqp,templib),Cint,(Ptr{DAQPBase.Workspace},Ptr{Cdouble}),daqp_work_ptr,lambda);
-        ccall((:ldp2qp_solution,templib),Cvoid,(Ptr{DAQPBase.Workspace},),daqp_work_ptr);
+        exitflag = ccall((:daqp_hiqp,templib),Cint,(Ptr{DyadDAQP.Workspace},Ptr{Cdouble}),daqp_work_ptr,lambda);
+        ccall((:ldp2qp_solution,templib),Cvoid,(Ptr{DyadDAQP.Workspace},),daqp_work_ptr);
         xgen = copy(unsafe_wrap(Vector{Cdouble}, ws.x, ws.n, own=false))
         @test norm(xref-xgen) < tol
     end
@@ -664,8 +664,8 @@ end
     bl = [-3*ones(3);4.5;4.5;2;7]
     sense = zeros(Cint,7)
     sense[6] = 4
-    d = DAQPBase.Model()
-    DAQPBase.setup(d,zeros(0,0),zeros(0),A,bu,bl,sense;break_points = Cint.([3;5;7]))
+    d = DyadDAQP.Model()
+    DyadDAQP.setup(d,zeros(0,0),zeros(0),A,bu,bl,sense;break_points = Cint.([3;5;7]))
     x,fval,exitflag,info = solve(d)
     @test exitflag > 0
 
@@ -674,8 +674,8 @@ end
     bu = [4.0;8;1]
     bl = [4.0;8;1]
     sense = zeros(Cint,3)
-    d = DAQPBase.Model()
-    DAQPBase.setup(d,zeros(0,0),zeros(0),A,bu,bl,sense;break_points = [0,2,3])
+    d = DyadDAQP.Model()
+    DyadDAQP.setup(d,zeros(0,0),zeros(0),A,bu,bl,sense;break_points = [0,2,3])
     x,fval,exitflag,info = solve(d)
     @test norm([6.0;1]-x) < tol
 
@@ -692,14 +692,14 @@ end
     bps   = [3;4;5;6]
 
     # Rejected up front, before any solve is attempted
-    d = DAQPBase.Model()
-    exitflag,_ = DAQPBase.setup(d,Hsing,zeros(3),A,bu,bl,sense;break_points = bps)
-    @test exitflag == DAQPBase.UNSUPPORTED
+    d = DyadDAQP.Model()
+    exitflag,_ = DyadDAQP.setup(d,Hsing,zeros(3),A,bu,bl,sense;break_points = bps)
+    @test exitflag == DyadDAQP.UNSUPPORTED
     @test !d.has_model
 
     # A hierarchy with a positive definite Hessian is unaffected
-    d = DAQPBase.Model()
-    exitflag,_ = DAQPBase.setup(d,Hpd,zeros(3),A,bu,bl,sense;break_points = bps)
+    d = DyadDAQP.Model()
+    exitflag,_ = DyadDAQP.setup(d,Hpd,zeros(3),A,bu,bl,sense;break_points = bps)
     @test exitflag >= 0
     x,fval,exitflag,info = solve(d)
     @test exitflag > 0
@@ -708,21 +708,21 @@ end
     # An update that turns the Hessian singular must report it too. Nothing
     # downstream re-checks, so the caller is expected to act on the flag
     # rather than solve a workspace that was rejected.
-    @test DAQPBase.update(d,Hsing,nothing,nothing,nothing,nothing) == DAQPBase.UNSUPPORTED
+    @test DyadDAQP.update(d,Hsing,nothing,nothing,nothing,nothing) == DyadDAQP.UNSUPPORTED
 
     # The rejection must leave nh/break_points intact -- they outlive the
     # solve (later solves, codegen), so nothing may overwrite them on the way.
     srcdir = tempname()
-    DAQPBase.codegen(d,dir=srcdir)
+    DyadDAQP.codegen(d,dir=srcdir)
     @test occursin("DAQP_HIERARCHICAL", read(joinpath(srcdir,"daqp_workspace.h"),String))
     @test occursin("break_points[4]", read(joinpath(srcdir,"daqp_workspace.c"),String))
     rm(srcdir,recursive=true)
 
     # A hierarchy paired with a non-symmetric AVI is rejected the same way
-    d = DAQPBase.Model()
+    d = DyadDAQP.Model()
     Hns = [2.0 1 0; -1 2 0; 0 0 2]
-    exitflag,_ = DAQPBase.setup(d,Hns,zeros(3),A,bu,bl,sense;break_points = bps, is_avi=true)
-    @test exitflag == DAQPBase.UNSUPPORTED
+    exitflag,_ = DyadDAQP.setup(d,Hns,zeros(3),A,bu,bl,sense;break_points = bps, is_avi=true)
+    @test exitflag == DyadDAQP.UNSUPPORTED
     @test !d.has_model
 end
 
@@ -738,14 +738,14 @@ end
     bu[mh+1:end] .= A[mh+1:end,:]*randn(n) .+ 0.05 # Conflicting soft levels
     bl[mh+1:end] .= bu[mh+1:end] .- 0.1
     bps = Cint.(mh .+ (0:nl) .* ml)
-    d = DAQPBase.Model()
-    DAQPBase.setup(d,H,f,A,bu,bl,zeros(Cint,m);break_points=bps)
-    x1,_,ef1,_ = DAQPBase.solve(d); x1 = copy(x1)
+    d = DyadDAQP.Model()
+    DyadDAQP.setup(d,H,f,A,bu,bl,zeros(Cint,m);break_points=bps)
+    x1,_,ef1,_ = DyadDAQP.solve(d); x1 = copy(x1)
     @test ef1 > 0
-    _,_,ef2,_ = DAQPBase.solve(d)
-    @test ef2 == DAQPBase.UNSUPPORTED
-    DAQPBase.update(d,nothing,nothing,nothing,nothing,nothing)
-    x3,_,ef3,_ = DAQPBase.solve(d)
+    _,_,ef2,_ = DyadDAQP.solve(d)
+    @test ef2 == DyadDAQP.UNSUPPORTED
+    DyadDAQP.update(d,nothing,nothing,nothing,nothing,nothing)
+    x3,_,ef3,_ = DyadDAQP.solve(d)
     @test ef3 > 0
     @test norm(x3-x1) < 1e-8*(1+norm(x1))
 
@@ -754,14 +754,14 @@ end
     A = [1.0 1; 2 2]
     bu = [10.0;10;1;4]
     bl = [-10.0;-10;1;4]
-    d = DAQPBase.Model()
-    DAQPBase.setup(d,Matrix{Float64}(I,2,2),zeros(2),A,bu,bl,zeros(Cint,4);break_points=Cint[2;4])
-    x,_,ef,_ = DAQPBase.solve(d)
+    d = DyadDAQP.Model()
+    DyadDAQP.setup(d,Matrix{Float64}(I,2,2),zeros(2),A,bu,bl,zeros(Cint,4);break_points=Cint[2;4])
+    x,_,ef,_ = DyadDAQP.solve(d)
     @test ef > 0
     @test norm(x-[0.75;0.75]) < 1e-4
     # The equalities are restored by the update
-    DAQPBase.update(d,nothing,nothing,nothing,nothing,nothing)
-    x,_,ef,_ = DAQPBase.solve(d)
+    DyadDAQP.update(d,nothing,nothing,nothing,nothing,nothing)
+    x,_,ef,_ = DyadDAQP.solve(d)
     @test ef > 0
     @test norm(x-[0.75;0.75]) < 1e-4
 end
@@ -791,11 +791,11 @@ end
          0.0 0.0 0.0 -1.0]
     b = [2.2693082025353517, 1.3445735938597536, -0.2693082025353519, 0.6554264061402464, 2.2330893356345, 1.172286796929877, -0.23308933563449985, 0.8277132030701232, 1.0, 0.5, 1.0, 0.5, 0.5, 2.0, 0.5, 2.0]
 
-    d = DAQPBase.Model()
+    d = DyadDAQP.Model()
 
-    exitflag,_ = DAQPBase.setup(d,H,f,A,b,Float64[],zeros(Cint, length(b)))
+    exitflag,_ = DyadDAQP.setup(d,H,f,A,b,Float64[],zeros(Cint, length(b)))
     @test exitflag == -1
-    _, _, exitflag, _ = DAQPBase.solve(d)
+    _, _, exitflag, _ = DyadDAQP.solve(d)
     @test exitflag < 0
 end
 
@@ -803,21 +803,21 @@ end
     # A zero constraint row is ignored at setup, but must be enforced again
     # (or detected as infeasible) after an update
     H, f = [1.0 0; 0 1], [-7.0, -7]
-    d = DAQPBase.Model()
-    DAQPBase.setup(d,H,f,[0.0 0.0],[25.0],[-1e30],zeros(Cint,1))
-    x, _, exitflag, _ = DAQPBase.solve(d)
+    d = DyadDAQP.Model()
+    DyadDAQP.setup(d,H,f,[0.0 0.0],[25.0],[-1e30],zeros(Cint,1))
+    x, _, exitflag, _ = DyadDAQP.solve(d)
     @test exitflag == 1 && x ≈ [7.0, 7.0]
 
     # Nonzero row: the constraint is active at the solution
-    DAQPBase.update(d,[0.25 -0.25; -0.25 1.25],[-7.0, 0],[56.0 14.0],[-220.0],[-1e30])
-    x, _, exitflag, _ = DAQPBase.solve(d)
+    DyadDAQP.update(d,[0.25 -0.25; -0.25 1.25],[-7.0, 0],[56.0 14.0],[-220.0],[-1e30])
+    x, _, exitflag, _ = DyadDAQP.solve(d)
     @test exitflag == 1
     @test 56*x[1]+14*x[2] ≤ -220 + 1e-6
 
     # Zero row with bounds that exclude 0: infeasible
-    d = DAQPBase.Model()
-    DAQPBase.setup(d,H,f,[0.0 0.0],[25.0],[-1e30],zeros(Cint,1))
-    exitflag = DAQPBase.update(d,nothing,nothing,nothing,[-220.0],[-1e30])
+    d = DyadDAQP.Model()
+    DyadDAQP.setup(d,H,f,[0.0 0.0],[25.0],[-1e30],zeros(Cint,1))
+    exitflag = DyadDAQP.update(d,nothing,nothing,nothing,[-220.0],[-1e30])
     @test exitflag == -1
 end
 
@@ -826,16 +826,16 @@ end
         n = 100; m = 500
         xref,H,f,A,b = generate_test_avi(n,m);
         # C api
-        x,λ,info = DAQPBase.avi(H,f,A,b);
+        x,λ,info = DyadDAQP.avi(H,f,A,b);
         @test norm(xref-x) < tol;
 
         # Pure Julia implemenetation
-        x,fval,exitflag,info = DAQPBase.solve_avi_jl(H,f,A,b);
+        x,fval,exitflag,info = DyadDAQP.solve_avi_jl(H,f,A,b);
         @test norm(xref-x) < tol;
 
         # With setup
-        d = DAQPBase.Model()
-        DAQPBase.setup(d,H,f,A,b;is_avi=true)
+        d = DyadDAQP.Model()
+        DyadDAQP.setup(d,H,f,A,b;is_avi=true)
         x,fval,exitflag,info = solve(d)
         @test norm(xref-x) < tol;
         x,fval,exitflag,info = solve(d)
@@ -845,16 +845,16 @@ end
 
     # Test avi interface by passing settings
     xref,H,f,A,b = generate_test_avi(n,m)
-    s = settings(DAQPBase.Model(), Dict(:iter_limit => 1))
-    _,_,exitflag,info = DAQPBase.avi(H,f,A,b; settings=s)
-    @test exitflag == DAQPBase.ITERLIMIT
+    s = settings(DyadDAQP.Model(), Dict(:iter_limit => 1))
+    _,_,exitflag,info = DyadDAQP.avi(H,f,A,b; settings=s)
+    @test exitflag == DyadDAQP.ITERLIMIT
     @test info.nodes == 1
 
     # Test that update does not cause a segfault for AVIs
     n = 10; m = 50
     xref,H,f,A,b = generate_test_avi(n,m);
-    d = DAQPBase.Model()
-    DAQPBase.setup(d,H,f,A,b;is_avi=true)
+    d = DyadDAQP.Model()
+    DyadDAQP.setup(d,H,f,A,b;is_avi=true)
     x,fval,exitflag,info = solve(d)
     @test exitflag > 0
     update(d,nothing,-f,nothing,nothing,nothing)
@@ -871,20 +871,20 @@ end
     @test norm(xref-x) < tol;
 
     # Test Model API
-    d = DAQPBase.Model()
+    d = DyadDAQP.Model()
     setup(d,C,f,A,bupper,blower,sense)
     x,fval,exitflag,info = solve(d)
     @test norm(xref-x) < tol;
 
     # A supplied Cholesky factor certifies positive definiteness, so even a
     # positive eps_prox must not select the proximal solver.
-    d_force = DAQPBase.Model()
-    DAQPBase.settings(d_force, Dict(:eps_prox => 1e-3))
+    d_force = DyadDAQP.Model()
+    DyadDAQP.settings(d_force, Dict(:eps_prox => 1e-3))
     setup(d_force,C,f,A,bupper,blower,sense)
-    ws_force = unsafe_load(Ptr{DAQPBase.Workspace}(d_force.work))
+    ws_force = unsafe_load(Ptr{DyadDAQP.Workspace}(d_force.work))
     @test ws_force.n_prox == 0
     x_force,_,exitflag_force,_ = solve(d_force)
-    @test exitflag_force == DAQPBase.OPTIMAL
+    @test exitflag_force == DyadDAQP.OPTIMAL
     @test norm(xref-x_force) < tol
 
     # Test diagonal
@@ -898,7 +898,7 @@ end
 
 @testset "Setting Warm Start" begin
     # Test primal start
-    d = DAQPBase.Model()
+    d = DyadDAQP.Model()
     xref,H,f,A,bupper,blower,sense = generate_test_QP(n,m,ms,nAct,kappa)
     setup(d,H,f,A,bupper,blower,sense;primal_start=xref)
     x,fval,exitflag,info = solve(d)
@@ -911,7 +911,7 @@ end
 
     # Test dual start
     λstar = info.λ
-    d = DAQPBase.Model()
+    d = DyadDAQP.Model()
     setup(d,H,f,A,bupper,blower,sense;dual_start=λstar)
     x,fval,exitflag,info = solve(d)
     @test norm(xref-x) < tol
@@ -922,7 +922,7 @@ end
     @test info.iterations==1
 
     # Ensure solver recovers from degenerate starting point
-    d = DAQPBase.Model()
+    d = DyadDAQP.Model()
     H,f = [1.0 0; 0 1.0], zeros(2);
     b = [1.0;1.0;2]
     A = ones(1,2);
@@ -939,8 +939,8 @@ end
 
     # Test warm start for AVIs
     xref,H,f,A,b = generate_test_avi(n,m);
-    xcold,fval,exitflag,info_cold = DAQPBase.avi(H,f,A,b)
-    xwarm,fval,exitflag,info_warm = DAQPBase.avi(H,f,A,b;primal_start = 0.95*xref)
+    xcold,fval,exitflag,info_cold = DyadDAQP.avi(H,f,A,b)
+    xwarm,fval,exitflag,info_warm = DyadDAQP.avi(H,f,A,b;primal_start = 0.95*xref)
     @test norm(xwarm-xref) < tol
 
 end
@@ -950,14 +950,14 @@ end
     xref,H,f,A,bupper,blower,sense = generate_test_QP(n,m,ms,nAct,kappa)
 
     # Setting a tiny time limit (1 nanosecond) should trigger TIMELIMIT exit
-    s = settings(DAQPBase.Model(), Dict(:time_limit => 1e-9))
+    s = settings(DyadDAQP.Model(), Dict(:time_limit => 1e-9))
     x,fval,exitflag,info = quadprog(H,f,A,bupper,blower,sense; settings=s)
-    @test exitflag == DAQPBase.TIMELIMIT
+    @test exitflag == DyadDAQP.TIMELIMIT
 
     # Setting a generous time limit should allow the solver to find the optimum
-    s = settings(DAQPBase.Model(), Dict(:time_limit => 100.0))
+    s = settings(DyadDAQP.Model(), Dict(:time_limit => 100.0))
     x,fval,exitflag,info = quadprog(H,f,A,bupper,blower,sense; settings=s)
-    @test exitflag == DAQPBase.OPTIMAL
+    @test exitflag == DyadDAQP.OPTIMAL
     @test norm(xref-x) < tol
 
     # Node relaxations in BnB can each finish before the inner solver's
@@ -977,14 +977,14 @@ end
     width = 0.15 .+ 0.15rand(rng_bnb, mt)
     but = vcat(ones(nbt), fill(2.0, nt - nbt), center + width)
     blt = vcat(zeros(nbt), fill(-2.0, nt - nbt), center - width)
-    st = vcat(fill(Cint(DAQPBase.BINARY), nbt), zeros(Cint, nt - nbt + mt))
+    st = vcat(fill(Cint(DyadDAQP.BINARY), nbt), zeros(Cint, nt - nbt + mt))
     _, fopt, exitflag, _ = quadprog(Ht, ft, At, but, blt, st)
-    @test exitflag == DAQPBase.OPTIMAL
-    s = settings(DAQPBase.Model(), Dict(:time_limit => 1e-9))
+    @test exitflag == DyadDAQP.OPTIMAL
+    s = settings(DyadDAQP.Model(), Dict(:time_limit => 1e-9))
     x, fval, exitflag, info = quadprog(Ht, ft, At, but, blt, st; settings=s)
     # An integer-feasible solution has been found before the limit, and the
     # best one is returned
-    @test exitflag == DAQPBase.FEASIBLE
+    @test exitflag == DyadDAQP.FEASIBLE
     @test info.status == :Feasible
     @test info.nodes <= 32
     @test all(min.(abs.(x[1:nbt]), abs.(x[1:nbt] .- 1)) .< 1e-6)
@@ -999,8 +999,8 @@ end
     nn = 40
     _, _, exitflag, info = quadprog(Matrix(1.0I, nn, nn), fill(-0.5, nn), ones(1, nn),
         vcat(ones(nn), 0.4nn), vcat(zeros(nn), -1e30),
-        vcat(fill(Cint(DAQPBase.BINARY), nn), Cint[0]); settings=s)
-    @test exitflag == DAQPBase.TIMELIMIT
+        vcat(fill(Cint(DyadDAQP.BINARY), nn), Cint[0]); settings=s)
+    @test exitflag == DyadDAQP.TIMELIMIT
     @test info.nodes <= 32
 end
 
@@ -1011,21 +1011,21 @@ end
 
     # Reference (no proximal)
     xref2,fval_ref,ef_ref,_ = quadprog(H,f,A,bupper,blower,sense)
-    @test ef_ref == DAQPBase.OPTIMAL
+    @test ef_ref == DyadDAQP.OPTIMAL
 
     # With eps_prox < 0, automatic mode leaves a PD Hessian unshifted.
-    s_prox = settings(DAQPBase.Model(), Dict(:eps_prox => -1e-4))
+    s_prox = settings(DyadDAQP.Model(), Dict(:eps_prox => -1e-4))
     x_prox,_,ef_prox,_ = quadprog(H,f,A,bupper,blower,sense; settings=s_prox)
-    @test ef_prox == DAQPBase.OPTIMAL
+    @test ef_prox == DyadDAQP.OPTIMAL
     @test norm(xref2 - x_prox) < tol
 
     # Check that the Workspace struct layout is correct by reading n_prox via
     # unsafe_load -- it must be 0 for a PD Hessian (no regularisation needed).
-    d = DAQPBase.Model()
-    DAQPBase.settings(d, Dict(:eps_prox => -1e-4))
-    DAQPBase.setup(d, H, f, A, bupper, blower, sense)
+    d = DyadDAQP.Model()
+    DyadDAQP.settings(d, Dict(:eps_prox => -1e-4))
+    DyadDAQP.setup(d, H, f, A, bupper, blower, sense)
     p = d.work  # raw workspace pointer (Ptr{Cvoid})
-    ws = unsafe_load(Ptr{DAQPBase.Workspace}(p))
+    ws = unsafe_load(Ptr{DyadDAQP.Workspace}(p))
     @test ws.n_prox == 0
 
     # A dense, ill-conditioned but positive-definite Hessian must not be
@@ -1033,13 +1033,13 @@ end
     # sqrt(zero_tol). This is representative of condensed MPC Hessians.
     Q_ill = [1.0 1.0; -1.0 1.0] / sqrt(2.0)
     H_ill = Q_ill' * Diagonal([1.0, 1e-7]) * Q_ill
-    d_ill = DAQPBase.Model()
-    DAQPBase.setup(d_ill, H_ill, zeros(2), zeros(0, 2), ones(2),
+    d_ill = DyadDAQP.Model()
+    DyadDAQP.setup(d_ill, H_ill, zeros(2), zeros(0, 2), ones(2),
                    -ones(2), zeros(Cint, 2))
-    ws_ill = unsafe_load(Ptr{DAQPBase.Workspace}(d_ill.work))
+    ws_ill = unsafe_load(Ptr{DyadDAQP.Workspace}(d_ill.work))
     @test ws_ill.n_prox == 0
-    _,_,ef_ill,_ = DAQPBase.solve(d_ill)
-    @test ef_ill == DAQPBase.OPTIMAL
+    _,_,ef_ill,_ = DyadDAQP.solve(d_ill)
+    @test ef_ill == DyadDAQP.OPTIMAL
 
     # --- Rank-1 Hessian: x2 direction is singular -> n_prox == 1 ---
     H_sing = [1.0 0.0; 0.0 0.0]
@@ -1049,14 +1049,14 @@ end
     bl_sing = [-2.0; -2.0]
     sense_sing = zeros(Cint, 2)
 
-    d2 = DAQPBase.Model()
-    DAQPBase.settings(d2, Dict(:eps_prox => -1e-3))
-    DAQPBase.setup(d2, H_sing, f_sing, A_sing, bu_sing, bl_sing, sense_sing)
-    ws2 = unsafe_load(Ptr{DAQPBase.Workspace}(d2.work))
+    d2 = DyadDAQP.Model()
+    DyadDAQP.settings(d2, Dict(:eps_prox => -1e-3))
+    DyadDAQP.setup(d2, H_sing, f_sing, A_sing, bu_sing, bl_sing, sense_sing)
+    ws2 = unsafe_load(Ptr{DyadDAQP.Workspace}(d2.work))
     @test ws2.n_prox == 1   # only x2 direction needed regularisation
 
-    x2,_,ef2,_ = DAQPBase.solve(d2)
-    @test ef2 == DAQPBase.OPTIMAL
+    x2,_,ef2,_ = DyadDAQP.solve(d2)
+    @test ef2 == DyadDAQP.OPTIMAL
     @test abs(x2[1] - (-1.0)) < tol   # x1* = -1
     @test abs(x2[2] - (-2.0)) < tol   # x2* = -2 (lower bound)
 
@@ -1075,24 +1075,24 @@ end
     bl_dense = x_dense_ref .- 1.0
     sense_dense = zeros(Cint, 3)
 
-    d_dense = DAQPBase.Model()
-    DAQPBase.settings(d_dense, Dict(:eps_prox => -1e-8))
-    DAQPBase.setup(d_dense, H_dense, f_dense, A_dense, bu_dense, bl_dense,
+    d_dense = DyadDAQP.Model()
+    DyadDAQP.settings(d_dense, Dict(:eps_prox => -1e-8))
+    DyadDAQP.setup(d_dense, H_dense, f_dense, A_dense, bu_dense, bl_dense,
                    sense_dense)
-    ws_dense = unsafe_load(Ptr{DAQPBase.Workspace}(d_dense.work))
+    ws_dense = unsafe_load(Ptr{DyadDAQP.Workspace}(d_dense.work))
     @test ws_dense.n_prox == 3
 
     # The factorization regularization is a numerical property and must not
     # change when only the requested feasibility tolerance changes.
-    d_dense_loose = DAQPBase.Model()
-    DAQPBase.settings(d_dense_loose,
+    d_dense_loose = DyadDAQP.Model()
+    DyadDAQP.settings(d_dense_loose,
                       Dict(:eps_prox => -1e-8, :primal_tol => 1e-3))
-    DAQPBase.setup(d_dense_loose, H_dense, f_dense, A_dense, bu_dense,
+    DyadDAQP.setup(d_dense_loose, H_dense, f_dense, A_dense, bu_dense,
                    bl_dense, sense_dense)
-    x_dense,_,ef_dense,_ = DAQPBase.solve(d_dense)
-    x_dense_loose,_,ef_dense_loose,_ = DAQPBase.solve(d_dense_loose)
-    @test ef_dense == DAQPBase.OPTIMAL
-    @test ef_dense_loose == DAQPBase.OPTIMAL
+    x_dense,_,ef_dense,_ = DyadDAQP.solve(d_dense)
+    x_dense_loose,_,ef_dense_loose,_ = DyadDAQP.solve(d_dense_loose)
+    @test ef_dense == DyadDAQP.OPTIMAL
+    @test ef_dense_loose == DyadDAQP.OPTIMAL
     @test norm(x_dense-x_dense_ref, Inf) < tol
     @test norm(x_dense_loose-x_dense, Inf) < tol
 
@@ -1105,7 +1105,7 @@ end
     sense_no_f = zeros(Cint, 2)
     x_no_f,_,ef_no_f,_ = quadprog(
         H_no_f, f_no_f, A_no_f, bu_no_f, bl_no_f, sense_no_f)
-    @test ef_no_f == DAQPBase.OPTIMAL
+    @test ef_no_f == DyadDAQP.OPTIMAL
     @test norm(x_no_f-[0.0; 1.0], Inf) < tol
 
     # --- Zero Hessian: all directions singular -> n_prox == n ---
@@ -1117,13 +1117,13 @@ end
     bl_zero = -5.0*ones(n3)
     sense_zero = zeros(Cint, n3)
 
-    d3 = DAQPBase.Model()
-    DAQPBase.settings(d3, Dict(:eps_prox => -1e-2))
-    DAQPBase.setup(d3, H_zero, f_zero, A_zero, bu_zero, bl_zero, sense_zero)
-    ws3 = unsafe_load(Ptr{DAQPBase.Workspace}(d3.work))
+    d3 = DyadDAQP.Model()
+    DyadDAQP.settings(d3, Dict(:eps_prox => -1e-2))
+    DyadDAQP.setup(d3, H_zero, f_zero, A_zero, bu_zero, bl_zero, sense_zero)
+    ws3 = unsafe_load(Ptr{DyadDAQP.Workspace}(d3.work))
     @test ws3.n_prox == n3
 
-    x3,_,ef3,_ = DAQPBase.solve(d3)
+    x3,_,ef3,_ = DyadDAQP.solve(d3)
     @test ef3 > 0
     @test norm(x3 .- (-5.0)) < tol  # all at lower bound
 end
@@ -1147,19 +1147,19 @@ end
     bu_face[2n_face:end] .+= 1 .+ 9 .* rand(rng, 120-n_face+1)
     bl_face = fill(-1e30, length(bu_face))
     sense_face = zeros(Cint, length(bu_face))
-    d_face = DAQPBase.Model()
-    DAQPBase.settings(d_face, Dict(:eta_prox => 1e-10, :dual_tol => 1e-9))
-    DAQPBase.setup(d_face, H_face, f_face, A_face, bu_face, bl_face, sense_face)
-    x, _, flag, info = DAQPBase.solve(d_face)
-    @test flag == DAQPBase.OPTIMAL
+    d_face = DyadDAQP.Model()
+    DyadDAQP.settings(d_face, Dict(:eta_prox => 1e-10, :dual_tol => 1e-9))
+    DyadDAQP.setup(d_face, H_face, f_face, A_face, bu_face, bl_face, sense_face)
+    x, _, flag, info = DyadDAQP.solve(d_face)
+    @test flag == DyadDAQP.OPTIMAL
     @test norm(x-x_face, Inf) < 1e-3
     @test maximum(vcat(x, A_face*x)-bu_face) < 1e-6
     @test norm(H_face*x + f_face + info.λ[1:n_face] +
                A_face'*info.λ[n_face+1:end], Inf) < 1e-6
     @test maximum(abs.(info.λ .* (vcat(x, A_face*x)-bu_face))) < 1e-6
     # Re-solving also checks that projection scratch preserves the workspace.
-    x_repeat, _, flag_repeat, _ = DAQPBase.solve(d_face)
-    @test flag_repeat == DAQPBase.OPTIMAL
+    x_repeat, _, flag_repeat, _ = DyadDAQP.solve(d_face)
+    @test flag_repeat == DyadDAQP.OPTIMAL
     @test norm(x_repeat-x_face, Inf) < 1e-3
 
     # Rotate the positive eigendirection so the same prescribed optimum also
@@ -1168,12 +1168,12 @@ end
     H_dense_face = 1e5 .* (positive_direction*positive_direction')
     f_dense_face = -H_dense_face*x_face - A_face[1:n_face-1, :]'*multipliers
     f_dense_face[3] -= 1e-3
-    dense_settings = settings(DAQPBase.Model(),
+    dense_settings = settings(DyadDAQP.Model(),
                              Dict(:eta_prox => 1e-10, :dual_tol => 1e-9))
     x_dense, _, flag_dense, info_dense = quadprog(
         H_dense_face, f_dense_face, A_face, bu_face, bl_face, sense_face;
         settings=dense_settings)
-    @test flag_dense == DAQPBase.OPTIMAL
+    @test flag_dense == DyadDAQP.OPTIMAL
     @test norm(x_dense-x_face, Inf) < 1e-3
     @test maximum(vcat(x_dense, A_face*x_dense)-bu_face) < 1e-6
     @test norm(H_dense_face*x_dense + f_dense_face + info_dense.λ[1:n_face] +
@@ -1190,27 +1190,27 @@ end
     bu_eq_test = vcat(fill(10.0, n_eq_test), zeros(neq_test), 10.0)
     bl_eq_test = vcat(fill(-10.0, n_eq_test), zeros(neq_test), -10.0)
     sense_eq_test = vcat(zeros(Cint, n_eq_test),
-                         fill(Cint(DAQPBase.EQUALITY), neq_test), Cint(0))
+                         fill(Cint(DyadDAQP.EQUALITY), neq_test), Cint(0))
 
-    d_eq_test = DAQPBase.Model()
-    qp_eq_test = DAQPBase.QPj(H_eq_test, zeros(n_eq_test), A_eq_test,
+    d_eq_test = DyadDAQP.Model()
+    qp_eq_test = DyadDAQP.QPj(H_eq_test, zeros(n_eq_test), A_eq_test,
                               bu_eq_test, bl_eq_test, sense_eq_test)
 
-    d_full_test = DAQPBase.Model()
-    DAQPBase.settings(d_full_test, Dict(:eq_reduction => DAQPBase.DAQP_EQ_REDUCTION_OFF))
-    setup_full_flag, _ = DAQPBase.setup(d_full_test, qp_eq_test)
+    d_full_test = DyadDAQP.Model()
+    DyadDAQP.settings(d_full_test, Dict(:eq_reduction => DyadDAQP.DAQP_EQ_REDUCTION_OFF))
+    setup_full_flag, _ = DyadDAQP.setup(d_full_test, qp_eq_test)
     @test setup_full_flag > 0
     @test unsafe_load(d_full_test.work).n == n_eq_test
 
-    DAQPBase.settings(d_eq_test, Dict(:eq_reduction => DAQPBase.DAQP_EQ_REDUCTION_ON))
-    setup_flag, _ = DAQPBase.setup(d_eq_test, qp_eq_test)
+    DyadDAQP.settings(d_eq_test, Dict(:eq_reduction => DyadDAQP.DAQP_EQ_REDUCTION_ON))
+    setup_flag, _ = DyadDAQP.setup(d_eq_test, qp_eq_test)
     @test setup_flag > 0
     # The equalities are eliminated, while the workspace describes the original problem
     @test unsafe_load(d_eq_test.work).eq != C_NULL
     @test unsafe_load(d_eq_test.work).n == n_eq_test
 
-    x_eq_test, _, exitflag_eq_test, _ = DAQPBase.solve(d_eq_test)
-    @test exitflag_eq_test == DAQPBase.OPTIMAL
+    x_eq_test, _, exitflag_eq_test, _ = DyadDAQP.solve(d_eq_test)
+    @test exitflag_eq_test == DyadDAQP.OPTIMAL
     @test x_eq_test ≈ zeros(n_eq_test)
     @test unsafe_load(d_eq_test.work).n == n_eq_test
 
@@ -1218,7 +1218,7 @@ end
     bl_updated = copy(d_eq_test.qpj.blower)
     bu_updated[end] = 9.0
     bl_updated[end] = -9.0
-    update_flag = DAQPBase.update(
+    update_flag = DyadDAQP.update(
         d_eq_test, nothing, nothing, nothing, bu_updated, bl_updated,
         nothing, nothing, Cint(0))
     @test update_flag == 0
@@ -1235,7 +1235,7 @@ end
     H = L'L / n + I
     f = randn(n)
     A = randn(neq + mineq, n)
-    sense = vcat(zeros(Cint, n), fill(Cint(DAQPBase.EQUALITY), neq),
+    sense = vcat(zeros(Cint, n), fill(Cint(DyadDAQP.EQUALITY), neq),
                  zeros(Cint, mineq))
     bounds(xr) = (vcat(xr .+ rand(n), A[1:neq, :] * xr,
                        A[neq+1:end, :] * xr .+ 0.3rand(mineq)),
@@ -1243,32 +1243,32 @@ end
     bu1, bl1 = bounds(randn(n))
     bu2, bl2 = bounds(randn(n))
 
-    xref1, fref1, eref1, _ = DAQPBase.quadprog(H, f, A, bu1, bl1, sense)
-    xref2, fref2, eref2, _ = DAQPBase.quadprog(H, f, A, bu2, bl2, sense)
-    @test eref1 == DAQPBase.OPTIMAL
-    @test eref2 == DAQPBase.OPTIMAL
+    xref1, fref1, eref1, _ = DyadDAQP.quadprog(H, f, A, bu1, bl1, sense)
+    xref2, fref2, eref2, _ = DyadDAQP.quadprog(H, f, A, bu2, bl2, sense)
+    @test eref1 == DyadDAQP.OPTIMAL
+    @test eref2 == DyadDAQP.OPTIMAL
 
     # Solving the same workspace twice gives the same answer both times
-    d = DAQPBase.Model()
-    DAQPBase.settings(d, Dict(:eq_reduction => DAQPBase.DAQP_EQ_REDUCTION_ON))
-    DAQPBase.setup(d, H, f, A, bu1, bl1, sense)
-    x1, _, e1, _ = DAQPBase.solve(d)
-    x2, fv2, e2, _ = DAQPBase.solve(d)
-    @test e1 == DAQPBase.OPTIMAL && e2 == DAQPBase.OPTIMAL
+    d = DyadDAQP.Model()
+    DyadDAQP.settings(d, Dict(:eq_reduction => DyadDAQP.DAQP_EQ_REDUCTION_ON))
+    DyadDAQP.setup(d, H, f, A, bu1, bl1, sense)
+    x1, _, e1, _ = DyadDAQP.solve(d)
+    x2, fv2, e2, _ = DyadDAQP.solve(d)
+    @test e1 == DyadDAQP.OPTIMAL && e2 == DyadDAQP.OPTIMAL
     @test norm(x1 - xref1) < 1e-8
     @test norm(x2 - xref1) < 1e-8
     @test abs(fv2 - fref1) < 1e-8
 
     # Solving after an update of the bounds, with or without an explicit mask
-    for mask in (Cint(0), DAQPBase.DAQP_UPDATE_d)
-        du = DAQPBase.Model()
-        DAQPBase.settings(du, Dict(:eq_reduction => DAQPBase.DAQP_EQ_REDUCTION_ON))
-        DAQPBase.setup(du, H, f, A, bu1, bl1, sense)
-        DAQPBase.solve(du)
-        DAQPBase.update(du, nothing, nothing, nothing, bu2, bl2,
+    for mask in (Cint(0), DyadDAQP.DAQP_UPDATE_d)
+        du = DyadDAQP.Model()
+        DyadDAQP.settings(du, Dict(:eq_reduction => DyadDAQP.DAQP_EQ_REDUCTION_ON))
+        DyadDAQP.setup(du, H, f, A, bu1, bl1, sense)
+        DyadDAQP.solve(du)
+        DyadDAQP.update(du, nothing, nothing, nothing, bu2, bl2,
                         nothing, nothing, mask)
-        xu, fvu, eu, _ = DAQPBase.solve(du)
-        @test eu == DAQPBase.OPTIMAL
+        xu, fvu, eu, _ = DyadDAQP.solve(du)
+        @test eu == DyadDAQP.OPTIMAL
         @test norm(xu - xref2) < 1e-8
         @test abs(fvu - fref2) < 1e-8
     end
@@ -1282,7 +1282,7 @@ end
     tquad = @elapsed x,fval,exitflag,info = quadprog(H,f,A,b)
     @test norm(x) < tol
     tsetup = @elapsed begin
-        d = DAQPBase.Model()
+        d = DyadDAQP.Model()
         setup(d,H,f,A,b)
         x,fval,exitflag,info2 = solve(d)
         @test norm(x) < tol
@@ -1297,15 +1297,15 @@ end
     bl = vcat(zeros(neq),fill(-1e30,n-neq))
     sense = vcat(fill(Cint(5),neq),zeros(Cint,n-neq))
     for field1 in (:A,:H,:f), field2 in (:A,:H)
-        d = DAQPBase.Model()
-        DAQPBase.settings(d,Dict(:eq_reduction=>1))
-        DAQPBase.setup(d,H,f,A,bu,bl,sense); DAQPBase.solve(d)
+        d = DyadDAQP.Model()
+        DyadDAQP.settings(d,Dict(:eq_reduction=>1))
+        DyadDAQP.setup(d,H,f,A,bu,bl,sense); DyadDAQP.solve(d)
         for field in (field1,field2)
-            @test DAQPBase.update(d,field == :H ? H : nothing,
+            @test DyadDAQP.update(d,field == :H ? H : nothing,
                 field == :f ? f : nothing,field == :A ? A : nothing,
                 nothing,nothing) == 0
         end
-        x,value,flag,_ = DAQPBase.solve(d)
+        x,value,flag,_ = DyadDAQP.solve(d)
         @test flag == 1
         @test x ≈ vcat(zeros(neq),ones(n-neq)) atol=1e-8
         @test value ≈ -36.0 atol=1e-8
@@ -1314,20 +1314,20 @@ end
 
 @testset "Generated soft weights with equality reduction" begin
     if local_lib && !isnothing(Sys.which("gcc"))
-        d = DAQPBase.Model()
-        DAQPBase.settings(d,Dict(:eq_reduction=>1))
+        d = DyadDAQP.Model()
+        DyadDAQP.settings(d,Dict(:eq_reduction=>1))
         H = Matrix{Float64}(I,2,2)
-        DAQPBase.setup(d,H,[0.0,-10.0],H,[0.0,0.0],[0.0,-1e30],Cint[5,8])
-        DAQPBase.soft_weights(d;rho_l=[0.0,0.2],rho_u=[0.0,0.1],
+        DyadDAQP.setup(d,H,[0.0,-10.0],H,[0.0,0.0],[0.0,-1e30],Cint[5,8])
+        DyadDAQP.soft_weights(d;rho_l=[0.0,0.2],rho_u=[0.0,0.1],
                                 w_l=[0.0,3.0],w_u=[0.0,2.0])
         mktempdir() do dir
-            DAQPBase.codegen(d;dir)
+            DyadDAQP.codegen(d;dir)
             get_local_sources(dir)
             library = joinpath(dir,"generated."*Base.Libc.Libdl.dlext)
             run(`gcc -shared -fPIC -I$dir $(joinpath(dir,"daqp_workspace.c")) -o $library`)
             handle = Base.Libc.Libdl.dlopen(library)
             try
-                generated = Ptr{DAQPBase.Workspace}(Base.Libc.Libdl.dlsym(handle,:daqp_work))
+                generated = Ptr{DyadDAQP.Workspace}(Base.Libc.Libdl.dlsym(handle,:daqp_work))
                 work = unsafe_load(generated)
                 @test work.n == 1
                 @test unsafe_load(work.rho_ls) ≈ 0.2
@@ -1337,9 +1337,9 @@ end
                 # Generated workspaces receive transformed bounds at runtime.
                 unsafe_store!(work.dupper,-10.0)
                 unsafe_store!(work.dlower,-1e30)
-                flag = ccall((:daqp_ldp,DAQPBase.libdaqp),Cint,
-                             (Ptr{DAQPBase.Workspace},),generated)
-                x,_,runtime_flag,_ = DAQPBase.solve(d)
+                flag = ccall((:daqp_ldp,DyadDAQP.libdaqp),Cint,
+                             (Ptr{DyadDAQP.Workspace},),generated)
+                x,_,runtime_flag,_ = DyadDAQP.solve(d)
                 @test flag == runtime_flag == 2
                 @test x[2] ≈ 8/11 atol=1e-9
                 @test unsafe_load(work.u)+10.0 ≈ x[2] atol=1e-9
@@ -1391,7 +1391,7 @@ function hq_reference(H,A,bu,bl,bps)
             end
         end
         Aq = [Aq; zeros(p,n) Matrix{Float64}(I,p,p)]; append!(buq,fill(1e30,p)); append!(blq,zeros(p))
-        z,_,ef,_ = DAQPBase.quadprog(Hq,zeros(n+p),Aq,buq,blq,zeros(Cint,length(buq)))
+        z,_,ef,_ = DyadDAQP.quadprog(Hq,zeros(n+p),Aq,buq,blq,zeros(Cint,length(buq)))
         ef > 0 || return nothing
         x = z[1:n]
         for i in lo:hi # Keep the violations of this level
@@ -1400,7 +1400,7 @@ function hq_reference(H,A,bu,bl,bps)
             ax < sl[i] && (sl[i] = ax-1e-5)
         end
     end
-    xr,_,ef,_ = DAQPBase.quadprog(H,zeros(n),An,su,sl,zeros(Cint,length(su)))
+    xr,_,ef,_ = DyadDAQP.quadprog(H,zeros(n),An,su,sl,zeros(Cint,length(su)))
     return ef > 0 ? xr : nothing
 end
 # A random hierarchy: bounds and hard inequalities first, then soft levels with
@@ -1435,10 +1435,10 @@ end
         xr = hq_reference(H,A,bu,bl,bps)
         # (a small linear soft penalty does not change the solution noticeably)
         for w_soft in (0.0, 1.0)
-            d = DAQPBase.Model()
-            DAQPBase.settings(d,Dict(:w_soft => w_soft))
-            DAQPBase.setup(d,H,zeros(n),A,bu,bl,zeros(Cint,length(bu));break_points=bps)
-            x,_,ef,info = DAQPBase.solve(d); x = copy(x)
+            d = DyadDAQP.Model()
+            DyadDAQP.settings(d,Dict(:w_soft => w_soft))
+            DyadDAQP.setup(d,H,zeros(n),A,bu,bl,zeros(Cint,length(bu));break_points=bps)
+            x,_,ef,info = DyadDAQP.solve(d); x = copy(x)
             @test ef == 1 || ef == 2 # (and not 3, which a failed level returns)
             isnothing(xr) && continue
             nchecked += w_soft == 0
@@ -1458,25 +1458,25 @@ end
     rng = MersenneTwister(5)
     n, nl, p = 10, 4, 5
     H,A,bu,bl,bps = hq_problem(copy(rng),n,nl,p)
-    d = DAQPBase.Model()
-    DAQPBase.setup(d,H,zeros(n),A,bu,bl,zeros(Cint,length(bu));break_points=bps)
-    x1,_,ef,_ = DAQPBase.solve(d); x1 = copy(x1)
+    d = DyadDAQP.Model()
+    DyadDAQP.setup(d,H,zeros(n),A,bu,bl,zeros(Cint,length(bu));break_points=bps)
+    x1,_,ef,_ = DyadDAQP.solve(d); x1 = copy(x1)
     @test ef > 0
     # The solution scales with the data
     for sc in [1e-2, 1e2]
         Hs,As,bus,bls,bpss = hq_problem(copy(rng),n,nl,p;sc)
-        ds = DAQPBase.Model()
-        DAQPBase.setup(ds,Hs,zeros(n),As,bus,bls,zeros(Cint,length(bus));break_points=bpss)
-        xs,_,efs,_ = DAQPBase.solve(ds)
+        ds = DyadDAQP.Model()
+        DyadDAQP.setup(ds,Hs,zeros(n),As,bus,bls,zeros(Cint,length(bus));break_points=bpss)
+        xs,_,efs,_ = DyadDAQP.solve(ds)
         @test efs > 0
         # (up to the tolerances, the soft penalty rho_soft = 1e-6 is relative)
         @test norm(xs-sc*x1) < 1e-5*sc*(1+norm(x1))
     end
     # Loose (but finite) bounds do not affect the solution
     Hl,Al,bul,bll,bpsl = hq_problem(copy(rng),n,nl,p;loose=true)
-    dl = DAQPBase.Model()
-    DAQPBase.setup(dl,Hl,zeros(n),Al,bul,bll,zeros(Cint,length(bul));break_points=bpsl)
-    xl,_,efl,_ = DAQPBase.solve(dl)
+    dl = DyadDAQP.Model()
+    DyadDAQP.setup(dl,Hl,zeros(n),Al,bul,bll,zeros(Cint,length(bul));break_points=bpsl)
+    xl,_,efl,_ = DyadDAQP.solve(dl)
     @test efl > 0
     xlr = hq_reference(Hl,Al,bul,bll,bpsl)
     @test !isnothing(xlr)
@@ -1486,8 +1486,8 @@ end
         @test cl[l] <= clr[l]+1e-2*clr[l]+1e-8
     end
     # A warm re-solve gives the same solution, also for new targets
-    DAQPBase.update(d,nothing,nothing,nothing,nothing,nothing)
-    x2,_,ef2,_ = DAQPBase.solve(d)
+    DyadDAQP.update(d,nothing,nothing,nothing,nothing,nothing)
+    x2,_,ef2,_ = DyadDAQP.solve(d)
     @test ef2 > 0 && norm(x2-x1) < 1e-8*(1+norm(x1))
     bu2 = copy(bu); bl2 = copy(bl)
     for i in bps[1]+1:length(bu)
@@ -1495,11 +1495,11 @@ end
         bu2[i] += 0.05*randn(rng)
         eq && (bl2[i] = bu2[i])
     end
-    DAQPBase.update(d,nothing,nothing,nothing,bu2,bl2)
-    x3,_,ef3,_ = DAQPBase.solve(d); x3 = copy(x3)
-    dc = DAQPBase.Model()
-    DAQPBase.setup(dc,H,zeros(n),A,bu2,bl2,zeros(Cint,length(bu2));break_points=bps)
-    x4,_,ef4,_ = DAQPBase.solve(dc)
+    DyadDAQP.update(d,nothing,nothing,nothing,bu2,bl2)
+    x3,_,ef3,_ = DyadDAQP.solve(d); x3 = copy(x3)
+    dc = DyadDAQP.Model()
+    DyadDAQP.setup(dc,H,zeros(n),A,bu2,bl2,zeros(Cint,length(bu2));break_points=bps)
+    x4,_,ef4,_ = DyadDAQP.solve(dc)
     @test ef3 > 0 && ef4 > 0 && norm(x3-x4) < 1e-6*(1+norm(x4))
 end
 
@@ -1508,9 +1508,9 @@ end
     # violation is still reported (as for a solved level, in the normalized LDP)
     A = [1.0 0; 0 1; 1 1]
     bu = [1.0; 2; 4]; bl = [1.0; 2; 4]
-    d = DAQPBase.Model()
-    DAQPBase.setup(d,Matrix{Float64}(I,2,2),zeros(2),A,bu,bl,zeros(Cint,3);break_points=Cint[0,2,3])
-    x,_,ef,info = DAQPBase.solve(d)
+    d = DyadDAQP.Model()
+    DyadDAQP.setup(d,Matrix{Float64}(I,2,2),zeros(2),A,bu,bl,zeros(Cint,3);break_points=Cint[0,2,3])
+    x,_,ef,info = DyadDAQP.solve(d)
     @test ef > 0
     # (the soft levels are met up to the penalty: slacks ~ rho_soft*lambda)
     @test norm(x-[1;2]) < 1e-5
@@ -1559,9 +1559,9 @@ end
     for k in 1:N
         n = 26+2k # (>= 24 unknowns, for the blocked reflections)
         H,A,bu,bl,bps = hq_robot(rng,n)
-        d = DAQPBase.Model()
-        DAQPBase.setup(d,H,zeros(n),A,bu,bl,zeros(Cint,length(bu));break_points=bps)
-        x,_,ef,_ = DAQPBase.solve(d); x = copy(x)
+        d = DyadDAQP.Model()
+        DyadDAQP.setup(d,H,zeros(n),A,bu,bl,zeros(Cint,length(bu));break_points=bps)
+        x,_,ef,_ = DyadDAQP.solve(d); x = copy(x)
         @test ef == 1 || ef == 2
         xr = hq_reference(H,A,bu,bl,bps)
         isnothing(xr) && continue

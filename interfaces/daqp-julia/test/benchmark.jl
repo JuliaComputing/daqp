@@ -22,8 +22,8 @@ using LinearAlgebra
 using Random
 using Statistics
 using Printf
-using DAQPBase
-using DAQP_jll
+using DyadDAQP
+using DyadDAQP_jll
 using Dates
 
 include("utils.jl")
@@ -180,17 +180,17 @@ function benchmark_lp(n, m, ms; num_problems=10, num_repeats=5)
     # This makes the benchmark work correctly with both the current C library
     # (which dispatches LPs via n_prox) and older libraries (which dispatch via
     # eps_prox != 0), avoiding a struct-layout mismatch when swapping .so files.
-    _default_s = DAQPBase.DAQPSettings()
-    _lp_settings = DAQPBase.DAQPSettings(
+    _default_s = DyadDAQP.DAQPSettings()
+    _lp_settings = DyadDAQP.DAQPSettings(
         [f == :eps_prox ? 1.0 : getfield(_default_s, f)
-         for f in fieldnames(DAQPBase.DAQPSettings)]...)
+         for f in fieldnames(DyadDAQP.DAQPSettings)]...)
 
     run_benchmark_case(
         () -> generate_test_LP(n, m, ms),
         function (problem)
             xref, f, A, bupper, blower, sense = problem
-            qpj = DAQPBase.QPj(zeros(0,0), f, A, bupper, blower, sense)
-            x, fval, exitflag, info = DAQPBase.quadprog(qpj; settings=_lp_settings)
+            qpj = DyadDAQP.QPj(zeros(0,0), f, A, bupper, blower, sense)
+            x, fval, exitflag, info = DyadDAQP.quadprog(qpj; settings=_lp_settings)
             if abs(f' * (xref - x)) > CORRECTNESS_TOL
                 @warn "Solution quality issue: |f'*(xref - x)| = $(abs(f' * (xref - x)))"
             end
@@ -256,7 +256,7 @@ function benchmark_avi(n, m; num_problems=10, num_repeats=5)
         () -> generate_test_avi(n, m),
         function (problem)
             xref, H, f, A, b = problem
-            x, fval, exitflag, info = DAQPBase.avi(H, f, A, b)
+            x, fval, exitflag, info = DyadDAQP.avi(H, f, A, b)
             if exitflag <= 0
                 @warn "AVI failed with exitflag $exitflag"
             elseif norm(xref - x) > CORRECTNESS_TOL
@@ -322,9 +322,9 @@ function benchmark_prox_comparison(n, m, ms, rank, nAct, kappa; num_runs=10)
 
         # Check n_prox for this problem (all runs should be identical rank)
         if isempty(n_prox_vals)
-            d_tmp = DAQPBase.Model()
+            d_tmp = DyadDAQP.Model()
             setup(d_tmp, H, f, A, bupper, blower, sense)
-            ws_tmp = unsafe_load(Ptr{DAQPBase.Workspace}(d_tmp.work))
+            ws_tmp = unsafe_load(Ptr{DyadDAQP.Workspace}(d_tmp.work))
             push!(n_prox_vals, ws_tmp.n_prox)
         end
 
@@ -335,7 +335,7 @@ function benchmark_prox_comparison(n, m, ms, rank, nAct, kappa; num_runs=10)
         # "one-shot" result the old code would have produced. ---
         η = 1.0  # regularisation amount added to H (matches the eps used in the old full-proximal approach)
         H_reg = H + η * I
-        s_old = settings(DAQPBase.Model(), Dict(:eps_prox => 0.0))
+        s_old = settings(DyadDAQP.Model(), Dict(:eps_prox => 0.0))
         x_old, _, ef_old, info_old = quadprog(H_reg, f, A, bupper, blower, sense; settings=s_old)
         push!(old_times, info_old.solve_time)
         push!(old_iters, info_old.iterations)
@@ -372,10 +372,10 @@ Columns:
                direct single solve of the pre-regularised problem)
 """
 function run_prox_benchmark(; output_file="prox_comparison.csv", use_local=false)
-    _libdaqp = joinpath(pkgdir(DAQPBase),"libdaqp."*Libc.Libdl.dlext)
+    _libdaqp = joinpath(pkgdir(DyadDAQP),"libdaqp."*Libc.Libdl.dlext)
     if isfile(_libdaqp) && use_local
         @info "Using local libdaqp"
-        DAQP_jll.libdaqp = _libdaqp
+        DyadDAQP_jll.libdaqp = _libdaqp
     end
 
     # (n, m, ms, rank, nAct, kappa)
@@ -484,14 +484,14 @@ function run_benchmarks(; suite="all", output_file="daqp_benchmark_results.csv",
     """
 
     # Use local libdaqp if available
-    _libdaqp = joinpath(pkgdir(DAQPBase),"libdaqp."*Libc.Libdl.dlext)
+    _libdaqp = joinpath(pkgdir(DyadDAQP),"libdaqp."*Libc.Libdl.dlext)
     if isfile(_libdaqp) && use_local
         local_lib = true
         @info "Using local libdaqp"
         println("local")
-        DAQP_jll.libdaqp = _libdaqp
+        DyadDAQP_jll.libdaqp = _libdaqp
     else
-        @info "Using DAQP_jll libdaqp"
+        @info "Using DyadDAQP_jll libdaqp"
         println("not local")
         local_lib = false
     end
@@ -512,7 +512,7 @@ function run_benchmarks(; suite="all", output_file="daqp_benchmark_results.csv",
     ]
 
     timestamp = string(now())
-    version = string(pkgversion(DAQPBase))
+    version = string(pkgversion(DyadDAQP))
     selected_types = parse_problem_types(problem_types)
 
     @info "Starting DAQP performance benchmarks..."

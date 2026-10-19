@@ -1,15 +1,15 @@
-module DAQPBase
+module DyadDAQP
 
-using DAQP_jll
+using DyadDAQP_jll
 # Prefer a locally-built libdaqp (e.g. placed there by a CMake build) over the
-# DAQP_jll artifact.  This allows downstream packages that `Pkg.develop` this
+# DyadDAQP_jll artifact.  This allows downstream packages that `Pkg.develop` this
 # module to pick up the latest compiled library automatically.
 
 function __init__()
     local_lib = joinpath(@__DIR__, "..", "libdaqp." * Libc.Libdl.dlext)
     if isfile(local_lib)
-        @info "DAQPBase: using local libdaqp at $local_lib"
-        DAQP_jll.libdaqp = local_lib
+        @info "DyadDAQP: using local libdaqp at $local_lib"
+        DyadDAQP_jll.libdaqp = local_lib
     end
 end
 

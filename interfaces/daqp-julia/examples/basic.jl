@@ -1,8 +1,8 @@
 ## Init
 using Pkg
 Pkg.activate(joinpath(dirname(@__FILE__), ".."))
-using DAQPBase
-DAQP = DAQPBase
+using DyadDAQP
+DAQP = DyadDAQP
 ## Setup QP data
 H = [1.0 0; 0 1];
 f = [2.0;2];

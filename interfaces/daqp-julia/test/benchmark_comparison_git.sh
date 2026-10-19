@@ -46,7 +46,7 @@ echo "Work regression threshold: $WORK_THRESHOLD%"
 echo "Output directory: $OUTPUT_DIR"
 echo ""
 
-# The benchmark script looks for libdaqp.so in pkgdir(DAQPBase), which is the Julia project dir
+# The benchmark script looks for libdaqp.so in pkgdir(DyadDAQP), which is the Julia project dir
 CURRENT_LIBDAQP="$JULIA_PROJECT/libdaqp.so"
 CURRENT_LIBDAQP_BAK="$OUTPUT_DIR/libdaqp_current.so"
 OLD_LIBDAQP_BAK="$OUTPUT_DIR/libdaqp_$GIT_REF_SLUG.so"

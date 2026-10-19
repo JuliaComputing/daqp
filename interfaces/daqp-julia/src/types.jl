@@ -105,8 +105,8 @@ struct DAQPSettings
     eq_reduction::Cint
 end
 function DAQPSettings()
-    settings = Ref{DAQPBase.DAQPSettings}()
-    ccall((:daqp_default_settings, libdaqp), Nothing,(Ref{DAQPBase.DAQPSettings},), settings)
+    settings = Ref{DyadDAQP.DAQPSettings}()
+    ccall((:daqp_default_settings, libdaqp), Nothing,(Ref{DyadDAQP.DAQPSettings},), settings)
     return settings[]
 end
 

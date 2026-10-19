@@ -31,7 +31,7 @@ struct AVIWorkspace
     Hx::Vector{Float64}
     x::Vector{Float64}
     y::Vector{Float64}
-    daqp_workspace::DAQPBase.Model
+    daqp_workspace::DyadDAQP.Model
     kkt_buffer::Vector{Float64}
 
     settings::AVISettings
@@ -62,10 +62,10 @@ function setup_avi_jl(H,f,A,bu,bl,sense;x0 = zeros(0), rho_soft = 1e6, daqp_work
     #sizehint!(kkt_buffer,4*(n+1)*(n+1))
 
     daqp_workspace = isnothing(daqp_workspace) ? Model() : daqp_workspace;
-    DAQPBase.settings(daqp_workspace, Dict(:iter_limit => settings.inner_iter_limit,
+    DyadDAQP.settings(daqp_workspace, Dict(:iter_limit => settings.inner_iter_limit,
                                            :primal_tol => settings.primal_tol,
                                            :dual_tol => settings.dual_tol))
-    exitflag,tsetup = DAQPBase.setup(daqp_workspace, H1pI, xtemp, A, bu, bl, sense)
+    exitflag,tsetup = DyadDAQP.setup(daqp_workspace, H1pI, xtemp, A, bu, bl, sense)
 
     workspace = unsafe_load(daqp_workspace.work);
     norm_factors = unsafe_wrap(Vector{Cdouble}, workspace.scaling, m; own = false)
@@ -122,8 +122,8 @@ function solve(ws::AVIWorkspace)
         ws.xtemp .= ws.f .+ ws.Hx
         mul!(ws.xtemp,ws.H1pI,ws.x,-1.0,1.0)
 
-        DAQPBase.update(ws.daqp_workspace, nothing, ws.xtemp, nothing, nothing,nothing)
-        ws.y[:], _, exitflag, info = DAQPBase.solve(ws.daqp_workspace)
+        DyadDAQP.update(ws.daqp_workspace, nothing, ws.xtemp, nothing, nothing,nothing)
+        ws.y[:], _, exitflag, info = DyadDAQP.solve(ws.daqp_workspace)
         if counter == terminate_limit  ## Happens after a kkt point has been tested
             res_cand = norm(ws.y-ws.x)
             if res_cand > res
@@ -193,7 +193,7 @@ function _solve_kkt(ws,ASu,ASl)
     @views K[1:n,n+1:end] = ws.At[:,AS]
     K[n+1:end,n+1:end] .= 0
     for (i,id) in enumerate(AS)
-        if ws.sense[id] & DAQPBase.SOFT != 0
+        if ws.sense[id] & DyadDAQP.SOFT != 0
             K[n+i,n+i] = -1/((ws.norm_factors[id]^2)*ws.rho_soft)
         end
     end
@@ -204,8 +204,8 @@ function _solve_kkt(ws,ASu,ASl)
 end
 
 """
-    x, λ, info = DAQPBase.solve_avi_jl(H,f,A,b)
-    x, λ, info = DAQPBase.solve_avi_jl(H,f,A,bupper,blower)
+    x, λ, info = DyadDAQP.solve_avi_jl(H,f,A,b)
+    x, λ, info = DyadDAQP.solve_avi_jl(H,f,A,bupper,blower)
 
 finds a solution `x` to the affine variational inequality
 
