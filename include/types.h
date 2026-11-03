@@ -77,6 +77,9 @@ typedef struct{
 
     // Equality-reduction policy: DAQP_EQ_REDUCTION_{OFF,AUTO,ON}
     int eq_reduction;
+
+    // Presolve mixed-integer problems when they are set up or updated (1) or not (0)
+    int presolve;
 }DAQPSettings;
 
 
@@ -85,6 +88,7 @@ typedef struct{
     int depth;
     int WS_start;
     int WS_end;
+    c_float lb; // Lower bound on internal objective
 }DAQPNode;
 
 typedef struct{
@@ -107,6 +111,10 @@ typedef struct{
     int n_root_WS;
 
     int nb_alloc; // Number of binary constraints that bin_ids, tree, fixed_ids and tree_WS have room for
+    c_float* RinvD; // Diagonal R of an LP with a singular Hessian (see daqp_bnb_prox)
+    c_float* reg; // eps_j of the regularization eps_j/2*x_j^2 in daqp_bnb_prox
+    c_float* xtmp; // Workspace for x
+    DAQPProblem* ps_qp; // Presolved copy of the problem (see daqp_presolve)
 }DAQPBnB;
 
 typedef struct{

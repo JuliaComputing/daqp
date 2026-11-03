@@ -398,6 +398,19 @@ end
         ef == DAQPBase.OPTIMAL && @test abs(fval-4.0) < 1e-6
     end
 
+    # Binaries without cost (regularized by DAQP): rel_subopt is relative to J, not to
+    # the regularized objective. b1+b2 >= 1, b2 = 1 => x >= 1 (J = 1), b1 = 1 => x >= 0 (J = 0)
+    Hs = [2.0 0 0; 0 0 0; 0 0 0]
+    As = [0.0 1.0 1.0; -1.0 0.0 1e4; -1.0 1e4 0.0]
+    bus, bls = [1e4, 1, 1, 1e30, 1e4-1, 1e4], [-1e4, 0, 0, 1, -1e30, -1e30]
+    senses = Cint[0, DAQPBase.BINARY, DAQPBase.BINARY, 0, 0, 0]
+    for rel in (0.0, 1e-2)
+        s = settings(DAQPBase.Model(), Dict(:rel_subopt => rel))
+        x,fval,ef,_ = quadprog(Hs,zeros(3),As,bus,bls,senses; settings=s)
+        @test ef > 0
+        @test abs(fval) < 1e-6
+    end
+
     # Random MIQPs: the result is within the allowed suboptimality
     Random.seed!(1234)
     for _ in 1:20
@@ -582,8 +595,7 @@ end
     d = DAQPBase.Model()
     DAQPBase.setup(d,H,f,A,bupper,blower,sense)
     srcdir = tempname();
-    DAQPBase.codegen(d,dir=srcdir,src=!local_lib)
-    local_lib && get_local_sources(srcdir)
+    DAQPBase.codegen(d,dir=srcdir,src=true)
     src = [f for f in readdir(srcdir) if last(f,1) == "c"]
     if(!isnothing(Sys.which("gcc")))
         testlib = "daqptestlib."* Base.Libc.Libdl.dlext
@@ -604,8 +616,7 @@ end
     d = DAQPBase.Model()
     DAQPBase.setup(d,diagm(5*ones(n)),f,A,bupper,blower,sense)
     srcdir = tempname();
-    DAQPBase.codegen(d,dir=srcdir,src=!local_lib)
-    local_lib && get_local_sources(srcdir)
+    DAQPBase.codegen(d,dir=srcdir,src=true)
     src = [f for f in readdir(srcdir) if last(f,1) == "c"]
     if(!isnothing(Sys.which("gcc")))
         testlib = "daqptestlib."* Base.Libc.Libdl.dlext
@@ -628,8 +639,7 @@ end
 
     # Test codegen
     srcdir = tempname();
-    DAQPBase.codegen(d,dir=srcdir,src=!local_lib)
-    local_lib && get_local_sources(srcdir)
+    DAQPBase.codegen(d,dir=srcdir,src=true)
     src = [f for f in readdir(srcdir) if last(f,1) == "c"]
 
     if(!isnothing(Sys.which("gcc")))
@@ -1321,8 +1331,7 @@ end
         DAQPBase.soft_weights(d;rho_l=[0.0,0.2],rho_u=[0.0,0.1],
                                 w_l=[0.0,3.0],w_u=[0.0,2.0])
         mktempdir() do dir
-            DAQPBase.codegen(d;dir)
-            get_local_sources(dir)
+            DAQPBase.codegen(d;dir,src=true)
             library = joinpath(dir,"generated."*Base.Libc.Libdl.dlext)
             run(`gcc -shared -fPIC -I$dir $(joinpath(dir,"daqp_workspace.c")) -o $library`)
             handle = Base.Libc.Libdl.dlopen(library)

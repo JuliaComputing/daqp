@@ -53,7 +53,7 @@ void daqp_solve(DAQPResult *res, DAQPWorkspace *work){
         }
         else{//Prox
             if(work->bnb != NULL)
-                res->exitflag = DAQP_EXIT_NONCONVEX;
+                res->exitflag = work->avi == NULL ? daqp_bnb_prox(work) : DAQP_EXIT_NONCONVEX;
             else
                 res->exitflag = daqp_prox(work);
         }
@@ -255,6 +255,10 @@ int setup_daqp_bnb(DAQPWorkspace* work, int* sense, int nb, int ns){
         work->bnb->root_WS= malloc((work->n+ns+1)*sizeof(int));
         work->bnb->n_root_WS= 0;
         work->bnb->nb_alloc = nb;
+        work->bnb->RinvD= malloc(work->n*sizeof(c_float));
+        work->bnb->reg= malloc(work->n*sizeof(c_float));
+        work->bnb->xtmp= malloc(work->n*sizeof(c_float));
+        work->bnb->ps_qp = NULL; // Allocated by the first presolve
     }
     return 1;
 }
@@ -326,6 +330,10 @@ void free_daqp_bnb(DAQPWorkspace* work){
         free(work->bnb->tree_WS);
         free(work->bnb->fixed_ids);
         free(work->bnb->root_WS);
+        free(work->bnb->RinvD);
+        free(work->bnb->reg);
+        free(work->bnb->xtmp);
+        free(work->bnb->ps_qp);
         free(work->bnb);
         work->bnb = NULL;
     }
@@ -612,6 +620,7 @@ void daqp_default_settings(DAQPSettings* settings){
     settings->refactor_tol = DAQP_DEFAULT_REFACTOR_TOL;
     settings->time_limit = 0;
     settings->eq_reduction = DAQP_EQ_REDUCTION_AUTO;
+    settings->presolve = 1;
 }
 
 /* Remove redundant constraints*/

@@ -21,8 +21,8 @@ constexpr int N = 12; // Variables
 constexpr int NB = 6; // The first NB variables can be binary
 constexpr int M = N + 3; // Simple bounds and three general constraints
 
-// H = I + c*ones (c = 0.3 by default), and the unconstrained minimizer is 0.5 for the first NB
-// variables and 0.2 for the others. The general constraints are
+// H = I + c*ones (c = 0.3 by default), and the unconstrained minimizer is 0.5 + 0.02*j for the
+// first NB variables (distinct, so that the integer solutions are unique) and 0.2 for the others. The general constraints are
 // sum(x[0:NB]) <= 2.6 (active at the root, so that branching is needed) and the
 // equality constraints x[6] - x[7] = 0 and x[8] + x[9] = 0.1.
 struct Problem {
@@ -34,7 +34,7 @@ struct Problem {
             for(int j = 0; j < N; j++) H[i*N+j] = (i == j) + c;
         for(int i = 0; i < N; i++){
             f[i] = 0;
-            for(int j = 0; j < N; j++) f[i] -= H[i*N+j]*(j < NB ? 0.5 : 0.2);
+            for(int j = 0; j < N; j++) f[i] -= H[i*N+j]*(j < NB ? 0.5 + 0.02*j : 0.2);
         }
         for(int k = 0; k < 3*N; k++) A[k] = 0;
         for(int j = 0; j < NB; j++) A[j] = 1;
