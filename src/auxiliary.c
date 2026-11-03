@@ -383,35 +383,6 @@ int daqp_add_infeasible(DAQPWorkspace *work){
     return 1;
 }
 
-/*
- * If the constraint that daqp_add_infeasible added makes the working set
- * singular with bounds that are consistent along the dependency, the other
- * active constraints imply it, so it cannot be violated in exact arithmetic and
- * its violation is rounding error in u. It is then removed, lam_star is again
- * the CSP of the working set, and 1 is returned.
- */
-int daqp_drop_implied_last(DAQPWorkspace *work){
-    int i, id;
-    c_float residual = 0, scale = 1, term;
-    c_float *swp_ptr;
-    if(work->sing_ind == DAQP_EMPTY_IND) return 0;
-    daqp_compute_singular_direction(work);
-    for(i = 0; i <= work->sing_ind; i++){
-        id = work->WS[i];
-        term = work->lam_star[i]*(DAQP_IS_LOWER(id) ? work->dlower[id] : work->dupper[id]);
-        residual += term;
-        scale += term < 0 ? -term : term;
-    }
-    if(residual > work->settings->primal_tol*scale ||
-            residual < -work->settings->primal_tol*scale)
-        return 0; // The bounds conflict along the dependency
-    daqp_drop_singular_last(work);
-    // Undo the swap in daqp_add_infeasible
-    swp_ptr=work->lam; work->lam = work->lam_star; work->lam_star=swp_ptr;
-    for(i = 0; i < work->n_active; i++) work->lam[i] = work->lam_star[i];
-    return 1;
-}
-
 // Compute all general constraint products from the existing row-major M.
 // Four rows are accumulated together to reuse u and expose independent
 // accumulation chains.  A NULL Mu buffer keeps the row-wise fallback active.
@@ -613,6 +584,17 @@ static void daqp_solve_Lt(const c_float *L, c_float *x, const int n){
         for(; j < i; j++) x[j] -= Li[j]*xi;
     }
 }
+// Row id of M (rows id < ms are rows of Rinv) times v
+static c_float daqp_row_dot(const DAQPWorkspace *work, const int id, const c_float* v){
+    int j, disp;
+    c_float s = 0;
+    if(id >= work->ms)
+        for(j = 0, disp = work->n*(id-work->ms); j < work->n; j++) s += work->M[disp++]*v[j];
+    else if(work->Rinv != NULL)
+        for(j = id, disp = DAQP_R_OFFSET(id,work->n); j < work->n; j++) s += work->Rinv[disp+j]*v[j];
+    else s = v[id];
+    return s;
+}
 
 void daqp_compute_CSP(DAQPWorkspace *work){
     int i,j,disp;
@@ -691,6 +673,11 @@ void daqp_pivot_last(DAQPWorkspace *work){
         // Ensure that binaries never swap order (since this order is exploited)
         if(DAQP_IS_BINARY(ind_old) && DAQP_IS_BINARY(work->WS[work->n_active-1])) return;
         if(work->bnb != NULL && rm_ind < work->bnb->n_clean) return;
+        // Do not swap if it would make the working set singular: the pivot of
+        // the swapped constraint becomes D[rm]*D[last]/(D[last]+l^2*D[rm])
+        const c_float l = work->L[DAQP_ARSUM(work->n_active-1)+rm_ind];
+        const c_float d_last = work->D[work->n_active-1];
+        if(work->D[rm_ind]*d_last < work->settings->sing_tol*(d_last+l*l*work->D[rm_ind])) return;
 
         c_float lam_old = work->lam[rm_ind];
         daqp_remove_constraint(work,rm_ind); // pivot_last might be recursively called here
@@ -723,6 +710,25 @@ int daqp_drop_singular_last(DAQPWorkspace *work){
     return id;
 }
 
+// Whether the other constraints of a singular working set imply the last one: the bounds are
+// consistent along the dependency, and no mutable constraint can leave along it (as in
+// daqp_remove_blocking), so that the dependency would otherwise certify infeasibility
+int daqp_implied_last(DAQPWorkspace *work){
+    int i, id;
+    c_float residual = 0, scale = 1, term;
+    daqp_compute_singular_direction(work);
+    for(i = 0; i <= work->sing_ind; i++){
+        id = work->WS[i];
+        term = work->lam_star[i]*(DAQP_IS_LOWER(id) ? work->dlower[id] : work->dupper[id]);
+        residual += term;
+        scale += term < 0 ? -term : term;
+        if(i < work->sing_ind && !DAQP_IS_IMMUTABLE(id) && (DAQP_IS_SOFT(id) ||
+                    (DAQP_IS_LOWER(id) ? -work->lam_star[i] : work->lam_star[i]) < -work->settings->zero_tol))
+            return 0; // Can leave
+    }
+    return residual <= work->settings->primal_tol*scale && residual >= -work->settings->primal_tol*scale;
+}
+
 // Activate the constraints that are marked active in sense
 // Equalities are activated before inequalities
 int daqp_activate_constraints(DAQPWorkspace *work){
@@ -735,27 +741,11 @@ int daqp_activate_constraints(DAQPWorkspace *work){
         }
         daqp_activate_constraint(work,i);
         if(work->sing_ind != DAQP_EMPTY_IND){
-            c_float dependency_residual = 0.0;
-            c_float dependency_scale = 1.0;
-
             //  The new equality is linearly dependent on the active equalities
-            daqp_compute_singular_direction(work);
-            for(j = 0; j < work->n_active; j++){
-                int id = work->WS[j];
-                c_float bound = DAQP_IS_LOWER(id)
-                    ? work->dlower[id] : work->dupper[id];
-                c_float term = work->lam_star[j] * bound;
-                dependency_residual += term;
-                dependency_scale += term < 0 ? -term : term;
-            }
-
             // Dependency might only be numerical => keep as mutable constraint
+            const int implied = daqp_implied_last(work);
             daqp_drop_singular_last(work);
-            if(dependency_residual >
-                        work->settings->primal_tol*dependency_scale ||
-                    dependency_residual <
-                        -work->settings->primal_tol*dependency_scale)
-                exitflag = DAQP_EXIT_OVERDETERMINED_INITIAL;
+            if(!implied) exitflag = DAQP_EXIT_OVERDETERMINED_INITIAL;
         }
     }
 
@@ -836,6 +826,43 @@ void daqp_sub_working_set_rows(DAQPWorkspace *work, const c_float* dlam, c_float
             for(j = 0, disp = work->n*(id-work->ms); j < work->n; j++)
                 y[j] -= work->M[disp++]*dl;
     }
+}
+
+// Recompute a suspicious pivot when row add_ind is added (the new row of L is at L+L_start):
+// c solves M_W M_W' c = M_W m (refined once) and the pivot is ||m - M_W'c||^2. If the residual
+// still decreases substantially in the refinement, the working set is singular.
+// (c is stored in the new row of L, and the residual r in zldl)
+// Only a singular verdict changes the factorization: otherwise the original row of L and pivot
+// are kept (the row is saved in the unused next row of L, which exists since n_active < n)
+void daqp_refine_pivot(DAQPWorkspace *work, const int add_ind, const int L_start){
+    int i, j, disp, it;
+    const int k = work->n_active, n = work->n;
+    c_float *c = work->L+L_start, *l = c+k+1, *r = work->zldl, rr[2];
+    work->reuse_ind = 0; // xldl and zldl are used as scratch
+    for(i = 0; i < k; i++) l[i] = c[i];
+    daqp_solve_Lt(work->L, c, k); // c = L'\l
+    for(it = 0; it < 2; it++){
+        for(j = 0; j < n; j++) r[j] = 0; // r = m - M_W'c
+        if(add_ind >= work->ms)
+            for(j = 0, disp = n*(add_ind-work->ms); j < n; j++) r[j] = work->M[disp++];
+        else if(work->Rinv != NULL)
+            for(j = add_ind, disp = DAQP_R_OFFSET(add_ind,n); j < n; j++) r[j] = work->Rinv[disp+j];
+        else r[add_ind] = 1;
+        daqp_sub_working_set_rows(work, c, r);
+        for(j = 0, rr[it] = 0; j < n; j++) rr[it] += r[j]*r[j];
+        if(it == 1) break;
+        for(i = 0; i < k; i++) work->xldl[i] = -daqp_row_dot(work, work->WS[i], r);
+        daqp_solve_working_set(work);
+        for(i = 0; i < k; i++) c[i] -= work->xldl[i];
+    }
+    if(rr[1] >= DAQP_PIVOT_REFINE_DECREASE*rr[0]){ // Nonsingular: keep the original row
+        for(i = 0; i < k; i++) c[i] = l[i];
+        return;
+    }
+    work->D[k] = 0;
+    for(j = 0; j < k; j++) // New row of L: l = L'c (in place, since row j only uses c[i], i >= j)
+        for(i = j+1, disp = DAQP_ARSUM(i)+j; i < k; disp += ++i)
+            c[j] += work->L[disp]*c[i];
 }
 
 // One step of iterative refinement for active constraints.

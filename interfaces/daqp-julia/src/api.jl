@@ -458,24 +458,44 @@ function codegen(d::DyadDAQP.Model; fname="daqp_workspace", dir="codegen", prefi
             push!(hfiles,"hierarchical.h")
         end
 
-        # The sources of the library that rendered the workspace, if its DyadDAQP_jll artifact ships them
-        # (share/daqp/src, as the builds of DyadDAQP_jll do); otherwise from the branch dyad of JuliaComputing/daqp
-        art_src = joinpath(DyadDAQP_jll.artifact_dir, "share", "daqp", "src")
-        art_inc = joinpath(DyadDAQP_jll.artifact_dir, "include", "daqp")
-        if startswith(DyadDAQP_jll.libdaqp, DyadDAQP_jll.artifact_dir) &&
-                all(f -> isfile(joinpath(art_src, f)), cfiles) && all(f -> isfile(joinpath(art_inc, f)), hfiles)
-            for (from, files) in ((art_src, cfiles), (art_inc, hfiles)), f in files
-                cp(joinpath(from, f), dir*f; force = true)
-                chmod(dir*f, 0o644) # the artifact is read-only
-            end
-        else
-            for f in cfiles
-                Downloads.download("https://raw.githubusercontent.com/JuliaComputing/daqp/dyad/src/"*f, dir*f)
-            end
-            for f in hfiles
-                Downloads.download("https://raw.githubusercontent.com/JuliaComputing/daqp/dyad/include/"*f, dir*f)
-            end
+        copy_c_sources(dir, cfiles, hfiles)
+    end
+end
+
+# Copy the C source files used for code generation into `dir`.
+# The sources have to match the libdaqp that rendered the workspace, so:
+#  1. If the package ships sources (placed in `csrc/` by the CMake build
+#     together with a local libdaqp), use those.
+#  2. If the DyadDAQP_jll artifact ships them (share/daqp/src, as the builds
+#     of DyadDAQP_jll do) and libdaqp is loaded from it, use those.
+#  3. Otherwise, download the sources from the branch dyad of JuliaComputing/daqp.
+function copy_c_sources(dir, cfiles, hfiles)
+    csrc = joinpath(@__DIR__, "..", "csrc")
+    if isdir(csrc)
+        for f in cfiles
+            cp(joinpath(csrc, "src", f), joinpath(dir, f); force=true)
         end
+        for f in hfiles
+            cp(joinpath(csrc, "include", f), joinpath(dir, f); force=true)
+        end
+        return
+    end
+    art_src = joinpath(DyadDAQP_jll.artifact_dir, "share", "daqp", "src")
+    art_inc = joinpath(DyadDAQP_jll.artifact_dir, "include", "daqp")
+    if startswith(DyadDAQP_jll.libdaqp, DyadDAQP_jll.artifact_dir) &&
+            all(f -> isfile(joinpath(art_src, f)), cfiles) && all(f -> isfile(joinpath(art_inc, f)), hfiles)
+        for (from, files) in ((art_src, cfiles), (art_inc, hfiles)), f in files
+            cp(joinpath(from, f), joinpath(dir, f); force = true)
+            chmod(joinpath(dir, f), 0o644) # the artifact is read-only
+        end
+        return
+    end
+    base = "https://raw.githubusercontent.com/JuliaComputing/daqp/dyad"
+    for f in cfiles
+        Downloads.download(base * "/src/" * f, joinpath(dir, f))
+    end
+    for f in hfiles
+        Downloads.download(base * "/include/" * f, joinpath(dir, f))
     end
 end
 
