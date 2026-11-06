@@ -92,6 +92,25 @@ of the relaxation of the problem without the regularization (which is then solve
 gives a lower bound). If eliminating the equality constraints makes
 the Hessian positive definite, the problem is solved exactly (exit flag `1`).
 
+### Branching
+The tree is explored depth first, and of the two children of a node, the one whose bound of the
+binary constraint is nearest to the relaxation is explored first. The setting `branching` selects
+the binary constraint to branch over among those that the relaxation of a node does not satisfy:
+
+- `0` (default): the first in the order of the constraints;
+- `1`: the last in the order of the constraints;
+- `2`: the most fractional, the one whose distance to its nearest bound, relative to half the
+  distance between its bounds, is the largest;
+- `3`: the first in a priority list, followed by the binary constraints that are not in the list, in
+  their order. The list holds indices of constraints in decreasing priority and is set after the
+  setup with `set_branch_priority(model, ids)` in Julia (1-based indices) or
+  `daqp_set_branch_priority(work, ids, n)` in C (0-based indices).
+
+The rule does not change the solution if the suboptimality tolerances are zero, but the number of
+nodes can differ substantially. In MPC with binary controls, the order of the constraints is often the
+order of the time steps; there, the rules `1` and `2` can explore considerably fewer nodes than
+the default.
+
 ### Presolve
 Mixed-integer problems with big-M constraints, such as $$y \le M b$$ with a binary $$b$$, often have
 weak relaxations that make branch and bound explore many nodes. Setting `presolve = 1` tightens

@@ -36,6 +36,7 @@ int setup_daqp_ldp(DAQPWorkspace *work, DAQPProblem* qp, const int init_mask);
 void setup_daqp_hiqp(DAQPWorkspace *work, int* break_points, int nh);
 int setup_daqp_bnb(DAQPWorkspace* work, int* sense, int nb, int ns);
 int daqp_update_bnb(DAQPWorkspace* work, const int m);
+int daqp_set_branch_priority(DAQPWorkspace* work, const int* ids, const int n);
 
 void allocate_daqp_settings(DAQPWorkspace *work);
 void allocate_daqp_workspace(DAQPWorkspace *work, int n, int ns);

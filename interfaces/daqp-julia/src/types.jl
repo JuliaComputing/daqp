@@ -104,6 +104,7 @@ struct DAQPSettings
     w_soft::Cdouble
     eq_reduction::Cint
     presolve::Cint
+    branching::Cint
 end
 function DAQPSettings()
     settings = Ref{DAQPBase.DAQPSettings}()
