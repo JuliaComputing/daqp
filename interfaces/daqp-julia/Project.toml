@@ -1,7 +1,7 @@
 name = "DyadDAQP"
 uuid = "e0fdcf0a-dbeb-4d6e-936d-2f80da65ad3e"
 authors = ["Daniel Arnström <daniel.arnstrom@gmail.com>", "JuliaHub, Inc."]
-version = "0.6.1"
+version = "0.6.2"
 
 [deps]
 DyadDAQP_jll = "85115ef5-2bcf-58b1-92f8-f482de81514c"
@@ -9,7 +9,7 @@ Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 
 [compat]
-DyadDAQP_jll = "0.11"
+DyadDAQP_jll = "0.11.1"
 julia = "1.6"
 
 [extras]
