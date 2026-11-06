@@ -259,7 +259,30 @@ int setup_daqp_bnb(DAQPWorkspace* work, int* sense, int nb, int ns){
         work->bnb->reg= malloc(work->n*sizeof(c_float));
         work->bnb->xtmp= malloc(work->n*sizeof(c_float));
         work->bnb->ps_qp = NULL; // Allocated by the first presolve
+        work->bnb->priority = NULL; // Set by daqp_set_branch_priority
+        work->bnb->n_priority = 0;
     }
+    return 1;
+}
+
+// Set the priority of the binary constraints for DAQPSettings.branching = DAQP_BRANCHING_PRIORITY: ids
+// holds n indices of constraints (0-based) in decreasing priority. Constraints that are not binary when
+// branch and bound selects a constraint are skipped, as are those that are not in the list, which follow the
+// list in their order. n = 0 clears the list. Must be called after the setup of a problem with binary
+// constraints. Returns 1 on success, -1 if the workspace has no branch-and-bound data, an index is out of
+// range or the memory cannot be allocated.
+int daqp_set_branch_priority(DAQPWorkspace* work, const int* ids, const int n){
+    int i, *p = NULL;
+    if(work->bnb == NULL || n < 0) return -1;
+    for(i = 0; i < n; i++) if(ids[i] < 0 || ids[i] >= work->m) return -1;
+    if(n > 0){
+        p = malloc(n*sizeof(int));
+        if(p == NULL) return -1;
+        for(i = 0; i < n; i++) p[i] = ids[i];
+    }
+    free(work->bnb->priority);
+    work->bnb->priority = p;
+    work->bnb->n_priority = n;
     return 1;
 }
 
@@ -334,6 +357,7 @@ void free_daqp_bnb(DAQPWorkspace* work){
         free(work->bnb->reg);
         free(work->bnb->xtmp);
         free(work->bnb->ps_qp);
+        free(work->bnb->priority);
         free(work->bnb);
         work->bnb = NULL;
     }
@@ -621,6 +645,7 @@ void daqp_default_settings(DAQPSettings* settings){
     settings->time_limit = 0;
     settings->eq_reduction = DAQP_EQ_REDUCTION_AUTO;
     settings->presolve = 1;
+    settings->branching = DAQP_BRANCHING_FIRST;
 }
 
 /* Remove redundant constraints*/

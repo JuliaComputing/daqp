@@ -80,6 +80,9 @@ typedef struct{
 
     // Presolve mixed-integer problems when they are set up or updated (1) or not (0)
     int presolve;
+
+    // Selection of the binary constraint to branch over: DAQP_BRANCHING_{FIRST,LAST,MOST_FRACTIONAL,PRIORITY}
+    int branching;
 }DAQPSettings;
 
 
@@ -115,6 +118,9 @@ typedef struct{
     c_float* reg; // eps_j of the regularization eps_j/2*x_j^2 in daqp_bnb_prox
     c_float* xtmp; // Workspace for x
     DAQPProblem* ps_qp; // Presolved copy of the problem (see daqp_presolve)
+
+    int* priority; // Binary constraints in decreasing priority (DAQP_BRANCHING_PRIORITY, see daqp_set_branch_priority)
+    int n_priority;
 }DAQPBnB;
 
 typedef struct{

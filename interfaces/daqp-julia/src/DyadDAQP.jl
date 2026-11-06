@@ -27,6 +27,7 @@ export setup
 export solve
 export update
 export settings
+export set_branch_priority
 export soft_weights
 
 export isfeasible

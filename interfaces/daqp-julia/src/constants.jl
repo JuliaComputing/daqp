@@ -26,6 +26,12 @@ const DAQP_EQ_REDUCTION_OFF = -1
 const DAQP_EQ_REDUCTION_AUTO = 0
 const DAQP_EQ_REDUCTION_ON = 1
 
+# Selection of the binary constraint to branch over (setting `branching`, see `set_branch_priority`)
+const DAQP_BRANCHING_FIRST = 0
+const DAQP_BRANCHING_LAST = 1
+const DAQP_BRANCHING_MOST_FRACTIONAL = 2
+const DAQP_BRANCHING_PRIORITY = 3
+
 # Exit Flags
 const  FEASIBLE       = 5
 const  OPTIMAL_INEXACT   = 4

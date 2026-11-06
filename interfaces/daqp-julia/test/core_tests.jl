@@ -468,6 +468,73 @@ end
     end
 end
 
+@testset "BnB branching rules" begin
+    # All rules find the optimal solution (abs_subopt = 0); a priority list in reverse order of the
+    # binary constraints branches as the rule last
+    Random.seed!(4321)
+    nv, nbv = 14, 10
+    for trial in 1:10
+        Mv = randn(nv, nv)
+        Hv = Mv'Mv + I
+        fv = -Hv * [0.2 .+ 0.6 .* rand(nbv); fill(0.1, nv - nbv)]
+        Av = [ones(1, nbv) zeros(1, nv - nbv)]
+        buv = [ones(nbv); fill(2.0, nv - nbv); 2.5 + 3rand()]
+        blv = [zeros(nbv); fill(-2.0, nv - nbv); -1e30]
+        sensev = Cint[fill(DyadDAQP.BINARY, nbv); zeros(Cint, nv - nbv + 1)]
+        function solve_rule(rule; priority = nothing)
+            d = DyadDAQP.Model()
+            DyadDAQP.settings(d, Dict{Symbol,Any}(:branching => Cint(rule)))
+            DyadDAQP.setup(d, Hv, fv, Av, buv, blv, sensev)
+            priority === nothing || DyadDAQP.set_branch_priority(d, priority)
+            return DyadDAQP.solve(d)
+        end
+        x0, f0, e0, i0 = solve_rule(DyadDAQP.DAQP_BRANCHING_FIRST)
+        @test e0 == DyadDAQP.OPTIMAL
+        for rule in (DyadDAQP.DAQP_BRANCHING_LAST, DyadDAQP.DAQP_BRANCHING_MOST_FRACTIONAL)
+            x, fval, exitflag, info = solve_rule(rule)
+            @test exitflag == DyadDAQP.OPTIMAL
+            @test isapprox(fval, f0; rtol = 1e-9, atol = 1e-9)
+        end
+        _, fl, _, il = solve_rule(DyadDAQP.DAQP_BRANCHING_LAST)
+        # The general constraint (not binary) in the list is skipped
+        _, fp, ep, ip = solve_rule(DyadDAQP.DAQP_BRANCHING_PRIORITY; priority = [nv + 1; nbv:-1:1])
+        @test ep == DyadDAQP.OPTIMAL
+        @test isapprox(fp, f0; rtol = 1e-9, atol = 1e-9)
+        @test ip.nodes == il.nodes
+    end
+    d = DyadDAQP.Model()
+    DyadDAQP.setup(d, Matrix(1.0I, 2, 2), [-0.5, -0.5], zeros(0, 2), [1.0, 1.0], [0.0, 0.0], Cint[DyadDAQP.BINARY, 0])
+    @test_throws ArgumentError DyadDAQP.set_branch_priority(d, [3])
+    @test_throws ArgumentError DyadDAQP.set_branch_priority(d, [0])
+    DyadDAQP.set_branch_priority(d, Int[])
+    @test DyadDAQP.solve(d)[3] == DyadDAQP.OPTIMAL
+
+    # Generated code holds the setting and the priority list (0-based indices)
+    if !isnothing(Sys.which("gcc"))
+        dg = DyadDAQP.Model()
+        DyadDAQP.settings(dg, Dict{Symbol,Any}(:branching => Cint(DyadDAQP.DAQP_BRANCHING_PRIORITY)))
+        DyadDAQP.setup(dg, Matrix(1.0I, 3, 3), [-0.4, -0.6, -0.5], zeros(0, 3), ones(3), zeros(3),
+                       Cint[DyadDAQP.BINARY, DyadDAQP.BINARY, 0])
+        DyadDAQP.set_branch_priority(dg, [2, 1])
+        mktempdir() do dir
+            DyadDAQP.codegen(dg; dir, src = true)
+            generated = read(joinpath(dir, "daqp_workspace.c"), String)
+            @test occursin("daqp_branch_priority[2]", generated)
+            library = joinpath(dir, "generated." * Base.Libc.Libdl.dlext)
+            run(`gcc -shared -fPIC -I$dir $(joinpath(dir, "daqp_workspace.c")) -o $library`)
+            handle = Base.Libc.Libdl.dlopen(library)
+            try
+                work = unsafe_load(Ptr{DyadDAQP.Workspace}(Base.Libc.Libdl.dlsym(handle, :daqp_work)))
+                @test unsafe_load(work.settings).branching == DyadDAQP.DAQP_BRANCHING_PRIORITY
+                prio = Base.Libc.Libdl.dlsym(handle, :daqp_branch_priority)
+                @test unsafe_wrap(Array, Ptr{Cint}(prio), 2) == Cint[1, 0]
+            finally
+                Base.Libc.Libdl.dlclose(handle)
+            end
+        end
+    end
+end
+
 @testset "BnB root warm start" begin
     Random.seed!(4321)
     H,f,A,bu,bl,sense = generate_test_MIQP(20,60,20,10)
