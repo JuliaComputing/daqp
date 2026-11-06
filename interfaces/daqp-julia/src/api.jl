@@ -564,3 +564,20 @@ function isfeasible(p::Ptr{DAQPBase.Workspace}, m=nothing, ms=nothing ;validate=
     reset(p)
     return exitflag == 1
 end
+
+"""
+    set_branch_priority(d::Model, ids)
+
+Set the priority of the binary constraints for the branching rule `DAQP_BRANCHING_PRIORITY` (setting
+`branching = 3`): `ids` holds the indices (1-based) of constraints in decreasing priority. Branch and bound
+selects the first constraint of `ids` that is binary and not satisfied by the relaxation, and otherwise the
+first such constraint that is not in `ids`, in the order of the constraints. An empty `ids` clears the
+priority. Call after `setup` of a problem with binary constraints.
+"""
+function set_branch_priority(d::DAQPBase.Model, ids::AbstractVector{<:Integer})
+    c = Cint[i - 1 for i in ids]
+    flag = ccall((:daqp_set_branch_priority, DAQPBase.libdaqp), Cint,
+                 (Ptr{DAQPBase.Workspace}, Ptr{Cint}, Cint), d.work, c, length(c))
+    flag < 0 && throw(ArgumentError("set_branch_priority: the model has no binary constraints set up, or an index is out of range"))
+    return nothing
+end

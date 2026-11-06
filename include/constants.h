@@ -39,6 +39,19 @@ extern "C" {
 // Smallest singularity tolerance in BnB (see daqp_bnb_sing_tol)
 #define DAQP_BNB_MIN_SING_TOL 1e-14
 
+// Selection of the binary constraint to branch over (DAQPSettings.branching). The tree is explored
+// depth first and the bound nearest to the relaxation first, with any rule. Among the binary
+// constraints that the relaxation does not satisfy, the rule selects
+//   FIRST:           the first in the order of the constraints,
+//   LAST:            the last in the order of the constraints,
+//   MOST_FRACTIONAL: the one farthest from its nearest bound, relative to the distance between its bounds,
+//   PRIORITY:        the first in the list set with daqp_set_branch_priority, followed by the
+//                    constraints that are not in the list, in their order.
+#define DAQP_BRANCHING_FIRST 0
+#define DAQP_BRANCHING_LAST 1
+#define DAQP_BRANCHING_MOST_FRACTIONAL 2
+#define DAQP_BRANCHING_PRIORITY 3
+
 // Equality-reduction policy (DAQPSettings.eq_reduction). AUTO only reduces
 // solves that start from scratch, which the setup/update marks with
 // DAQP_UPDATE_eliminate (daqp_quadprog, the interfaces' one-shot solves, and

@@ -332,43 +332,72 @@ int daqp_process_node(DAQPNode* node, DAQPWorkspace* work){
     return exitflag;
 }
 
+// Whether the binary constraint id needs branching at the node being processed: it is not fixed and the
+// relaxation does not satisfy it. diff is the signed distance of the relaxation from the midpoint of the
+// bounds, dist the distance to the nearest bound and tol the (scaled) primal tolerance
+static int daqp_branch_candidate(const int id, DAQPNode* node, DAQPWorkspace* work,
+        c_float* diff, c_float* dist, c_float* tol){
+    int j;
+    if(!(work->sense[id] & DAQP_BINARY)) return 0;
+    // Skip fixed binary constraints (also those dropped from the working set since
+    // their bounds are implied, which may still be off by rounding)
+    if(DAQP_IS_ACTIVE(id)) return 0;
+    for(j = 0; j <= node->depth; j++)
+        if(DAQP_REMOVE_LOWER_FLAG(work->bnb->fixed_ids[j]) == id) return 0;
+
+    // Compute signed distance from midpoint between bounds
+    *diff = daqp_binary_diff(id,work);
+
+    // A zero-dual binary constraint can lie at an endpoint without being
+    // active. It is already integer feasible and does not need branching.
+    *dist = 0.5*(work->dupper[id]-work->dlower[id]) -(*diff < 0 ? -*diff : *diff);
+    *tol = work->settings->primal_tol;
+    if(work->scaling != NULL) *tol *= work->scaling[id];
+    return *dist > *tol;
+}
+
+// Branch over the binary constraint id (see daqp_branch_candidate for diff, dist and tol)
+static int daqp_branch_on(const int id, const c_float diff, c_float dist, const c_float tol,
+        DAQPNode* node, DAQPWorkspace* work){
+    // Bounds for the children (spawned in node/node+1) from KKT at u*:
+    // ||u||^2 >= ||u*||^2 + (m_i'(u-u*))^2 since ||m_i|| = 1 (unless soft)
+    const c_float dist_far = DAQP_IS_SOFT(id) ? 0 : work->dupper[id]-work->dlower[id]-dist-tol;
+    dist = DAQP_IS_SOFT(id) ? 0 : dist-tol;
+    (node+1)->lb = work->fval + dist*dist; // Nearest endpoint
+    node->lb = work->fval + dist_far*dist_far;
+    // Explore the endpoint nearest to the relaxation first.
+    return diff < 0 ? id : DAQP_ADD_LOWER_FLAG(id);
+}
+
+// The binary constraint to branch over (DAQPSettings.branching), with the lower flag if the lower bound is
+// explored first, or DAQP_EMPTY_IND if the relaxation satisfies all binary constraints
 int daqp_get_branch_id(DAQPWorkspace* work){
-    int i, j;
-    int id = DAQP_EMPTY_IND;
-    c_float diff, dist, tol, dist_far;
+    int i, k, id, best = DAQP_EMPTY_IND;
+    const int nb = work->bnb->nb, rule = work->settings->branching;
+    c_float diff, dist, tol, frac, best_diff = 0, best_dist = 0, best_tol = 0, best_frac = -1;
     DAQPNode* node = work->bnb->tree+work->bnb->n_nodes; // Node being processed
 
-    for(i=0; i < work->bnb->nb; i++){
-        id = work->bnb->bin_ids[i];
-        // Skip fixed binary constraints (also those dropped from the working set since
-        // their bounds are implied, which may still be off by rounding)
-        if(DAQP_IS_ACTIVE(id)) continue;
-        for(j = 0; j <= node->depth; j++)
-            if(DAQP_REMOVE_LOWER_FLAG(work->bnb->fixed_ids[j]) == id) break;
-        if(j <= node->depth) continue;
-
-        // Compute signed distance from midpoint between bounds
-        diff = daqp_binary_diff(id,work);
-
-        // A zero-dual binary constraint can lie at an endpoint without being
-        // active. It is already integer feasible and does not need branching.
-        dist = 0.5*(work->dupper[id]-work->dlower[id])
-            -(diff < 0 ? -diff : diff);
-        tol = work->settings->primal_tol;
-        if(work->scaling != NULL) tol *= work->scaling[id];
-        if(dist <= tol) continue;
-
-        // Bounds for the children (spawned in node/node+1) from KKT at u*:
-        // ||u||^2 >= ||u*||^2 + (m_i'(u-u*))^2 since ||m_i|| = 1 (unless soft)
-        dist_far = DAQP_IS_SOFT(id) ? 0 : work->dupper[id]-work->dlower[id]-dist-tol;
-        dist = DAQP_IS_SOFT(id) ? 0 : dist-tol;
-        (node+1)->lb = work->fval + dist*dist; // Nearest endpoint
-        node->lb = work->fval + dist_far*dist_far;
-        // Explore the endpoint nearest to the relaxation first.
-        return diff < 0 ? id : DAQP_ADD_LOWER_FLAG(id);
+    if(rule == DAQP_BRANCHING_PRIORITY){
+        for(k = 0; k < work->bnb->n_priority; k++){
+            id = work->bnb->priority[k];
+            if(daqp_branch_candidate(id,node,work,&diff,&dist,&tol))
+                return daqp_branch_on(id,diff,dist,tol,node,work);
+        }
     }
-
-    return DAQP_EMPTY_IND;
+    for(k = 0; k < nb; k++){
+        i = rule == DAQP_BRANCHING_LAST ? nb-1-k : k;
+        id = work->bnb->bin_ids[i];
+        if(!daqp_branch_candidate(id,node,work,&diff,&dist,&tol)) continue;
+        if(rule != DAQP_BRANCHING_MOST_FRACTIONAL)
+            return daqp_branch_on(id,diff,dist,tol,node,work);
+        // Distance to the nearest bound relative to half the distance between the bounds (1 at the midpoint)
+        frac = dist/(0.5*(work->dupper[id]-work->dlower[id]));
+        if(frac > best_frac){
+            best = id; best_diff = diff; best_dist = dist; best_tol = tol; best_frac = frac;
+        }
+    }
+    return best == DAQP_EMPTY_IND ? DAQP_EMPTY_IND :
+        daqp_branch_on(best,best_diff,best_dist,best_tol,node,work);
 }
 
 void daqp_spawn_children(DAQPNode* node, const int branch_id, DAQPWorkspace* work){

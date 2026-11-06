@@ -320,7 +320,8 @@ void write_daqp_settings_src(FILE*  f, DAQPSettings* settings, const char* prefi
     fprintf(f, "(c_float)%.20f,",  settings->time_limit);
     fprintf(f, "(c_float)%.20f,", settings->w_soft);
     fprintf(f, "%d,", settings->eq_reduction);
-    fprintf(f, "%d", settings->presolve);
+    fprintf(f, "%d,", settings->presolve);
+    fprintf(f, "%d", settings->branching);
     fprintf(f, "};\n\n");
 }
 
@@ -330,6 +331,7 @@ void write_daqp_bnb_h(FILE*  f, DAQPBnB* bnb, const int n, const char* prefix){
     fprintf(f, "extern DAQPNode %stree[%d];\n", prefix, bnb->nb+1);
     fprintf(f, "extern int %stree_WS[%d];\n", prefix, (n+1)*(bnb->nb+1));
     fprintf(f, "extern int %sfixed_ids[%d];\n", prefix, bnb->nb+1);
+    if(bnb->n_priority > 0) fprintf(f, "extern int %sbranch_priority[%d];\n", prefix, bnb->n_priority);
     fprintf(f, "extern DAQPBnB %sbnb_work;\n\n", prefix);
 }
 void write_daqp_bnb_src(FILE*  f, DAQPBnB* bnb, const int n, const char* prefix){
@@ -342,6 +344,10 @@ void write_daqp_bnb_src(FILE*  f, DAQPBnB* bnb, const int n, const char* prefix)
     fprintf(f, "DAQPNode %stree[%d];\n", prefix, bnb->nb+1);
     fprintf(f, "int %stree_WS[%d];\n", prefix, (n+1)*(bnb->nb+1));
     fprintf(f, "int %sfixed_ids[%d];\n", prefix, bnb->nb+1);
+    if(bnb->n_priority > 0){
+        snprintf(varname, sizeof(varname), "%sbranch_priority", prefix);
+        write_int_array(f,bnb->priority, bnb->n_priority,varname);
+    }
 
     fprintf(f, "DAQPBnB %sbnb_work= {", prefix);
     fprintf(f, "%sbin_ids, ", prefix);
@@ -362,6 +368,9 @@ void write_daqp_bnb_src(FILE*  f, DAQPBnB* bnb, const int n, const char* prefix)
     fprintf(f, "NULL, "); // root_WS
     fprintf(f, "(int)%d, ", 0); // n_root_WS
     fprintf(f, "(int)%d, ", bnb->nb); // nb_alloc (the static arrays above)
+    fprintf(f, "NULL, NULL, NULL, NULL, "); // RinvD, reg, xtmp, ps_qp
+    if(bnb->n_priority > 0) fprintf(f, "%sbranch_priority, (int)%d, ", prefix, bnb->n_priority);
+    else fprintf(f, "NULL, (int)0, "); // priority, n_priority
 
     fprintf(f, "};\n\n");
 }
