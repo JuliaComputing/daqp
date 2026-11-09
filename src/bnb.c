@@ -3,6 +3,46 @@
 #include "utils.h"
 #endif
 
+#ifdef DAQP_PARALLEL
+#include "bnb_parallel.h"
+
+// The bound fval_bound (in the scale 0.5*fval = J + c, see daqp_bnb_bound) is shared between the
+// threads of daqp_solve_parallel as the bound fval_bound - c on J, which does not depend on c.
+// Returns 1 if another thread has explored its tree (the search is stopped)
+static int daqp_bnb_sync(DAQPWorkspace* work, const c_float c){
+    DAQPBnBShared* sh = (DAQPBnBShared*)work->bnb->shared;
+    c_float bound;
+    if(sh == NULL) return 0;
+    if(atomic_load_explicit(&sh->done, memory_order_relaxed)) return 1;
+    bound = atomic_load_explicit(&sh->J_bound, memory_order_relaxed) + c;
+    if(bound < work->settings->fval_bound) work->settings->fval_bound = bound;
+    return 0;
+}
+
+// Make the bound of a new incumbent known to the other threads
+static void daqp_bnb_publish(DAQPWorkspace* work, const c_float c){
+    DAQPBnBShared* sh = (DAQPBnBShared*)work->bnb->shared;
+    c_float J, cur;
+    if(sh == NULL) return;
+    J = work->settings->fval_bound - c;
+    cur = atomic_load_explicit(&sh->J_bound, memory_order_relaxed);
+    while(J < cur && !atomic_compare_exchange_weak(&sh->J_bound, &cur, J));
+}
+
+// The tree of work has been explored: stop the other threads
+static void daqp_bnb_finish(DAQPWorkspace* work){
+    DAQPBnBShared* sh = (DAQPBnBShared*)work->bnb->shared;
+    DAQPWorkspace* none = NULL;
+    if(sh == NULL) return;
+    atomic_compare_exchange_strong(&sh->winner, &none, work);
+    atomic_store(&sh->done, 1);
+}
+#else
+#define daqp_bnb_sync(work,c) 0
+#define daqp_bnb_publish(work,c)
+#define daqp_bnb_finish(work)
+#endif
+
 static c_float daqp_binary_diff(const int id, DAQPWorkspace* work){
     int j, disp;
     c_float diff = 0.5*(work->dupper[id]+work->dlower[id]);
@@ -206,7 +246,8 @@ int daqp_bnb_lb(DAQPWorkspace* work, const c_float lb){
     // Objective J = 0.5*fval - c, with c = 0.5*||v||^2 - fp, where fp is the objective
     // removed by equality elimination (only needed for rel_subopt, fval_bound and lb)
     c_float fval_bound0 = work->settings->fval_bound, fval_best = 0, c = 0;
-    if(work->settings->rel_subopt > 0 || fval_bound0 < DAQP_INF || lb > -DAQP_INF){
+    if(work->settings->rel_subopt > 0 || fval_bound0 < DAQP_INF || lb > -DAQP_INF ||
+            work->bnb->shared != NULL){
         if(work->v != NULL) for(int i=0; i < work->n; i++) c += 0.5*work->v[i]*work->v[i];
         if(work->eq != NULL && work->eq->installed) c -= work->eq->fp;
     }
@@ -219,6 +260,7 @@ int daqp_bnb_lb(DAQPWorkspace* work, const c_float lb){
         if(fval_best >= 0 && 0.5*fval_best < work->settings->fval_bound){
             work->settings->fval_bound = daqp_bnb_bound(fval_best,c+daqp_bnb_reg(work->xold,lb,work),
                     lb,work->settings);
+            daqp_bnb_publish(work,c);
             swp_ptr = work->xold; // Marks that a feasible solution is stored in xold
         }
     }
@@ -236,8 +278,15 @@ int daqp_bnb_lb(DAQPWorkspace* work, const c_float lb){
     work->bnb->nWS=0;
 
     exitflag = DAQP_EXIT_INFEASIBLE;
+    int explored = 1; // The tree is explored (not stopped early)
     // Start tree exploration
     while( work->bnb->n_nodes > 0 ){
+        // Bound from the incumbents of other threads (see daqp_solve_parallel)
+        if(daqp_bnb_sync(work,c)){
+            explored = 0;
+            exitflag = DAQP_EXIT_TIMELIMIT;
+            break;
+        }
 
         node = work->bnb->tree+(--work->bnb->n_nodes);
         if(node->lb > 2*work->settings->fval_bound) continue;
@@ -251,13 +300,17 @@ int daqp_bnb_lb(DAQPWorkspace* work, const c_float lb){
             toc((DAQPtimer*)work->timer);
             if(get_time((DAQPtimer*)work->timer) > work->settings->time_limit){
                 exitflag = DAQP_EXIT_TIMELIMIT;
+                explored = 0;
                 break;
             }
         }
 #endif
         // Cut conditions
         if(exitflag==DAQP_EXIT_INFEASIBLE) continue; // Dominance cut
-        if(exitflag<0) break; // Inner solver failed => exit loop
+        if(exitflag<0){ // Inner solver failed => exit loop
+            explored = 0;
+            break;
+        }
 
         // Find index to branch over
         branch_id = daqp_get_branch_id(work);
@@ -265,6 +318,7 @@ int daqp_bnb_lb(DAQPWorkspace* work, const c_float lb){
             fval_best = work->fval;
             work->settings->fval_bound = daqp_bnb_bound(fval_best,c+daqp_bnb_reg(work->u,lb,work),
                     lb,work->settings);
+            daqp_bnb_publish(work,c);
             swp_ptr=work->xold; work->xold= work->u; work->u=swp_ptr; // Store feasible sol
         }
         else{
@@ -273,6 +327,7 @@ int daqp_bnb_lb(DAQPWorkspace* work, const c_float lb){
     }
 
     // Exploration completed
+    if(explored) daqp_bnb_finish(work);
     work->iterations = work->bnb->itercount;
     // Restore the root state (unfix binaries etc.) so that the workspace can
     // be reused for subsequent solves

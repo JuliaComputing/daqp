@@ -261,6 +261,7 @@ int setup_daqp_bnb(DAQPWorkspace* work, int* sense, int nb, int ns){
         work->bnb->ps_qp = NULL; // Allocated by the first presolve
         work->bnb->priority = NULL; // Set by daqp_set_branch_priority
         work->bnb->n_priority = 0;
+        work->bnb->shared = NULL; // Set by daqp_solve_parallel
     }
     return 1;
 }

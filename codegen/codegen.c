@@ -371,6 +371,7 @@ void write_daqp_bnb_src(FILE*  f, DAQPBnB* bnb, const int n, const char* prefix)
     fprintf(f, "NULL, NULL, NULL, NULL, "); // RinvD, reg, xtmp, ps_qp
     if(bnb->n_priority > 0) fprintf(f, "%sbranch_priority, (int)%d, ", prefix, bnb->n_priority);
     else fprintf(f, "NULL, (int)0, "); // priority, n_priority
+    fprintf(f, "NULL, "); // shared
 
     fprintf(f, "};\n\n");
 }

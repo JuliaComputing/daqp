@@ -4,6 +4,7 @@ set(
     "${CMAKE_CURRENT_SOURCE_DIR}/avi.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/auxiliary.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/bnb.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/bnb_parallel.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/constants.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/daqp.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/daqp_prox.h"

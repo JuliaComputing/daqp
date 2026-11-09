@@ -566,3 +566,46 @@ function set_branch_priority(d::DyadDAQP.Model, ids::AbstractVector{<:Integer})
     flag < 0 && throw(ArgumentError("set_branch_priority: the model has no binary constraints set up, or an index is out of range"))
     return nothing
 end
+
+"""
+    x, fval, exitflag, info = solve_parallel(models::AbstractVector{Model})
+
+Solve a mixed-integer problem with parallel branch and bound. Each model holds the same problem, set up
+separately, and may have other settings, e.g., another `branching` rule. Each model is solved by an
+operating-system thread of its own (not a Julia thread). The threads share the objective of the best
+integer-feasible solution found by any of them, which bounds the nodes of all of them, and the solve ends
+when the first thread has explored its tree, which proves that the best solution is optimal.
+
+`info.iterations` and `info.nodes` are the totals of all threads and `info.solve_time` is the elapsed
+time. The solution is also stored in the first model. If the library is built without parallel support,
+or the problem has no binary constraints, only the first model is solved. Throws an `ArgumentError` if the
+models do not hold problems of the same dimensions.
+
+The call does not return to the Julia runtime until all threads have finished, so a garbage collection
+requested by another Julia thread waits for it.
+"""
+function solve_parallel(ds::AbstractVector{DyadDAQP.Model})
+    isempty(ds) && throw(ArgumentError("solve_parallel: no models"))
+    all(d -> d.has_model, ds) || throw(ArgumentError("solve_parallel: every model must be set up"))
+    Libc.Libdl.dlsym_e(Libc.Libdl.dlopen(DyadDAQP.libdaqp), :daqp_solve_parallel) == C_NULL &&
+        error("solve_parallel: the loaded libdaqp does not provide daqp_solve_parallel")
+    d = first(ds)
+    works = Ptr{DyadDAQP.Workspace}[m.work for m in ds]
+    result_ptr = Ref(DAQPResult(d.x, d.λ))
+    GC.@preserve ds begin
+        ccall((:daqp_solve_parallel, DyadDAQP.libdaqp), Cint,
+              (Ref{DyadDAQP.DAQPResult}, Ptr{Ptr{DyadDAQP.Workspace}}, Cint),
+              result_ptr, works, length(works))
+    end
+    foreach(m -> m.has_solved = true, ds)
+    result = result_ptr[]
+    result.exitflag == UNSUPPORTED &&
+        throw(ArgumentError("solve_parallel: the models must hold problems of the same dimensions with settings of their own"))
+    info = (x = d.x, λ = d.λ, fval = result.fval,
+            exitflag = result.exitflag,
+            status = DyadDAQP.flag2status[result.exitflag],
+            solve_time = result.solve_time,
+            setup_time = 0.0,
+            iterations = result.iter, nodes = result.nodes)
+    return copy(d.x), result.fval, result.exitflag, info
+end

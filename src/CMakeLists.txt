@@ -4,6 +4,7 @@ set(
     "${CMAKE_CURRENT_SOURCE_DIR}/avi.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/auxiliary.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/bnb.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/bnb_parallel.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/daqp.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/daqp_prox.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/eq_elim.c"

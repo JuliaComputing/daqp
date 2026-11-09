@@ -121,6 +121,8 @@ typedef struct{
 
     int* priority; // Binary constraints in decreasing priority (DAQP_BRANCHING_PRIORITY, see daqp_set_branch_priority)
     int n_priority;
+
+    void* shared; // DAQPBnBShared of a parallel solve (see daqp_solve_parallel), else NULL
 }DAQPBnB;
 
 typedef struct{

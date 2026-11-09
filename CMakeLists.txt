@@ -29,6 +29,17 @@ if(NOT SOFT_WEIGHTS)
   add_compile_definitions(DAQP_NO_SOFT_WEIGHTS)
 endif()
 
+option (PARALLEL "Parallel branch and bound (daqp_solve_parallel), requires threads and C11 atomics" ON)
+if(PARALLEL)
+  find_package(Threads)
+  if(Threads_FOUND)
+    add_compile_definitions(DAQP_PARALLEL)
+  else()
+    message(WARNING "PARALLEL requested but no thread library was found: daqp_solve_parallel solves sequentially")
+    set(PARALLEL OFF)
+  endif()
+endif()
+
 option (FASTER_MATH "Enable some faster math" ON)
 if(FASTER_MATH)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fassociative-math -fno-signed-zeros -fno-trapping-math")
@@ -91,6 +102,10 @@ set(CMAKE_C_STANDARD_LIBRARIES "${CMAKE_C_STANDARD_LIBRARIES}") # math for C api
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -Wall -Wextra")
 
 target_link_libraries(daqpstat daqp)
+if(PARALLEL)
+  target_link_libraries(daqp Threads::Threads)
+  target_link_libraries(daqpstat Threads::Threads)
+endif()
 
 # Install
 install(TARGETS daqpstat EXPORT  ${PROJECT_NAME}Config

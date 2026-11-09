@@ -47,6 +47,7 @@ if(TEST)
     add_executable(27_bnb_update_binaries tests/27_bnb_update_binaries.cpp)
     add_executable(28_sparse_A tests/28_sparse_A.cpp)
     add_executable(29_bnb_branching tests/29_bnb_branching.cpp)
+    add_executable(30_bnb_parallel tests/30_bnb_parallel.cpp)
 
     set(TARGETS
         00_basic_qp
@@ -79,6 +80,7 @@ if(TEST)
         27_bnb_update_binaries
         28_sparse_A
         29_bnb_branching
+        30_bnb_parallel
     )
 
     foreach(TARGET ${TARGETS})

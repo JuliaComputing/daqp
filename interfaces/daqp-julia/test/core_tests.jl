@@ -468,6 +468,38 @@ end
     end
 end
 
+@testset "Parallel BnB" begin
+    # A portfolio of branching rules finds the optimal solution of every single rule
+    Random.seed!(2468)
+    n, m, ms, nb = 20, 25, 20, 14
+    function models(H, f, A, bu, bl, sense; rules = 0:2)
+        ds = [DyadDAQP.Model() for _ in rules]
+        for (d, rule) in zip(ds, rules)
+            DyadDAQP.settings(d, Dict{Symbol,Any}(:branching => Cint(rule)))
+            DyadDAQP.setup(d, H, f, A, bu, bl, sense)
+        end
+        return ds
+    end
+    for trial in 1:10
+        H, f, A, bu, bl, sense = generate_test_MIQP(n, m, ms, nb)
+        ds = models(H, f, A, bu, bl, sense)
+        refs = [DyadDAQP.solve(d)[2] for d in models(H, f, A, bu, bl, sense)]
+        x, fval, exitflag, info = DyadDAQP.solve_parallel(ds)
+        @test exitflag == DyadDAQP.OPTIMAL
+        @test all(r -> isapprox(fval, r; rtol = 1e-9, atol = 1e-9), refs)
+        @test all(xi -> min(abs(xi), abs(xi - 1)) < 1e-8, x[1:nb])
+        @test info.nodes > 0
+    end
+    # Infeasible: the cardinality constraint requires a sum of the binaries in (1, 2)
+    H, f, A, bu, bl, sense = generate_test_MIQP(n, m, ms, nb)
+    bu[ms+1], bl[ms+1] = 1.5, 1.2
+    @test DyadDAQP.solve_parallel(models(H, f, A, bu, bl, sense))[3] == DyadDAQP.INFEASIBLE
+    # Models of different dimensions are rejected
+    H2, f2, A2, bu2, bl2, sense2 = generate_test_MIQP(n + 1, m + 1, ms + 1, nb)
+    ds = [models(H, f, A, bu, bl, sense; rules = 0:0); models(H2, f2, A2, bu2, bl2, sense2; rules = 1:1)]
+    @test_throws ArgumentError DyadDAQP.solve_parallel(ds)
+end
+
 @testset "BnB branching rules" begin
     # All rules find the optimal solution (abs_subopt = 0); a priority list in reverse order of the
     # binary constraints branches as the rule last
