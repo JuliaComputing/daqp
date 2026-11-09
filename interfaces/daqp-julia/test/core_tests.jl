@@ -500,6 +500,10 @@ end
     bus, bls, senses = [1.0, 1e3, 1e30], [0.0, -1e3, 1e10], Cint[DyadDAQP.BINARY, 0, DyadDAQP.SOFT]
     @test DyadDAQP.solve(models(Hs, fs, As, bus, bls, senses; rules = 0:0)[1])[3] == DyadDAQP.INFEASIBLE
     @test DyadDAQP.solve_parallel(models(Hs, fs, As, bus, bls, senses))[3] == DyadDAQP.INFEASIBLE
+    # Models whose settings change the problem (here the cutoff fval_bound) are rejected
+    ds = models(H, f, A, bu, bl, sense; rules = 0:1)
+    DyadDAQP.settings(ds[1], Dict{Symbol,Any}(:fval_bound => 0.0))
+    @test_throws ArgumentError DyadDAQP.solve_parallel(ds)
     # Models of different dimensions are rejected
     H2, f2, A2, bu2, bl2, sense2 = generate_test_MIQP(n + 1, m + 1, ms + 1, nb)
     ds = [models(H, f, A, bu, bl, sense; rules = 0:0); models(H2, f2, A2, bu2, bl2, sense2; rules = 1:1)]
