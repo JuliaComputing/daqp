@@ -414,14 +414,25 @@ static int daqp_branch_candidate(const int id, DAQPNode* node, DAQPWorkspace* wo
 // Branch over the binary constraint id (see daqp_branch_candidate for diff, dist and tol)
 static int daqp_branch_on(const int id, const c_float diff, c_float dist, const c_float tol,
         DAQPNode* node, DAQPWorkspace* work){
-    // Bounds for the children (spawned in node/node+1) from KKT at u*:
+    // Bounds for the children from KKT at u*:
     // ||u||^2 >= ||u*||^2 + (m_i'(u-u*))^2 since ||m_i|| = 1 (unless soft)
     const c_float dist_far = DAQP_IS_SOFT(id) ? 0 : work->dupper[id]-work->dlower[id]-dist-tol;
-    dist = DAQP_IS_SOFT(id) ? 0 : dist-tol;
-    (node+1)->lb = work->fval + dist*dist; // Nearest endpoint
-    node->lb = work->fval + dist_far*dist_far;
-    // Explore the endpoint nearest to the relaxation first.
-    return diff < 0 ? id : DAQP_ADD_LOWER_FLAG(id);
+    const c_float lb_near = work->fval + (DAQP_IS_SOFT(id) ? 0 : (dist-tol)*(dist-tol));
+    const c_float lb_far = work->fval + dist_far*dist_far;
+    // diff < 0: the relaxation is above the midpoint, so the upper bound is the nearest
+    const int near_upper = diff < 0;
+    int upper_first;
+    switch(work->settings->child_order){
+        case DAQP_CHILD_FARTHEST: upper_first = !near_upper; break;
+        case DAQP_CHILD_UP:       upper_first = 1; break;
+        case DAQP_CHILD_DOWN:     upper_first = 0; break;
+        default:                  upper_first = near_upper; // DAQP_CHILD_NEAREST
+    }
+    // The child spawned in node+1 is explored first, and its lower bound is the one of the
+    // bound it activates
+    (node+1)->lb = upper_first == near_upper ? lb_near : lb_far;
+    node->lb = upper_first == near_upper ? lb_far : lb_near;
+    return upper_first ? id : DAQP_ADD_LOWER_FLAG(id);
 }
 
 // The binary constraint to branch over (DAQPSettings.branching), with the lower flag if the lower bound is
@@ -429,7 +440,8 @@ static int daqp_branch_on(const int id, const c_float diff, c_float dist, const 
 int daqp_get_branch_id(DAQPWorkspace* work){
     int i, k, id, best = DAQP_EMPTY_IND;
     const int nb = work->bnb->nb, rule = work->settings->branching;
-    c_float diff, dist, tol, frac, best_diff = 0, best_dist = 0, best_tol = 0, best_frac = -1;
+    const int fractional = rule == DAQP_BRANCHING_MOST_FRACTIONAL || rule == DAQP_BRANCHING_LEAST_FRACTIONAL;
+    c_float diff, dist, tol, frac, best_diff = 0, best_dist = 0, best_tol = 0, best_frac = 0;
     DAQPNode* node = work->bnb->tree+work->bnb->n_nodes; // Node being processed
 
     if(rule == DAQP_BRANCHING_PRIORITY){
@@ -443,11 +455,13 @@ int daqp_get_branch_id(DAQPWorkspace* work){
         i = rule == DAQP_BRANCHING_LAST ? nb-1-k : k;
         id = work->bnb->bin_ids[i];
         if(!daqp_branch_candidate(id,node,work,&diff,&dist,&tol)) continue;
-        if(rule != DAQP_BRANCHING_MOST_FRACTIONAL)
+        if(!fractional)
             return daqp_branch_on(id,diff,dist,tol,node,work);
         // Distance to the nearest bound relative to half the distance between the bounds (1 at the midpoint)
         frac = dist/(0.5*(work->dupper[id]-work->dlower[id]));
-        if(frac > best_frac){
+        // Ties are resolved in favor of the first candidate
+        if(best == DAQP_EMPTY_IND ||
+                (rule == DAQP_BRANCHING_MOST_FRACTIONAL ? frac > best_frac : frac < best_frac)){
             best = id; best_diff = diff; best_dist = dist; best_tol = tol; best_frac = frac;
         }
     }

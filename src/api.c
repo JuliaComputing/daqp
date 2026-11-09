@@ -647,6 +647,7 @@ void daqp_default_settings(DAQPSettings* settings){
     settings->eq_reduction = DAQP_EQ_REDUCTION_AUTO;
     settings->presolve = 1;
     settings->branching = DAQP_BRANCHING_FIRST;
+    settings->child_order = DAQP_CHILD_NEAREST;
 }
 
 /* Remove redundant constraints*/

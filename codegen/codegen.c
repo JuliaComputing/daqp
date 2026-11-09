@@ -321,7 +321,8 @@ void write_daqp_settings_src(FILE*  f, DAQPSettings* settings, const char* prefi
     fprintf(f, "(c_float)%.20f,", settings->w_soft);
     fprintf(f, "%d,", settings->eq_reduction);
     fprintf(f, "%d,", settings->presolve);
-    fprintf(f, "%d", settings->branching);
+    fprintf(f, "%d,", settings->branching);
+    fprintf(f, "%d", settings->child_order);
     fprintf(f, "};\n\n");
 }
 

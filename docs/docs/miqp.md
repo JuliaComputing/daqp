@@ -93,8 +93,7 @@ gives a lower bound). If eliminating the equality constraints makes
 the Hessian positive definite, the problem is solved exactly (exit flag `1`).
 
 ### Branching
-The tree is explored depth first, and of the two children of a node, the one whose bound of the
-binary constraint is nearest to the relaxation is explored first. The setting `branching` selects
+The tree is explored depth first. The setting `branching` selects
 the binary constraint to branch over among those that the relaxation of a node does not satisfy:
 
 - `0` (default): the first in the order of the constraints;
@@ -104,9 +103,18 @@ the binary constraint to branch over among those that the relaxation of a node d
 - `3`: the first in a priority list, followed by the binary constraints that are not in the list, in
   their order. The list holds indices of constraints in decreasing priority and is set after the
   setup with `set_branch_priority(model, ids)` in Julia (1-based indices) or
-  `daqp_set_branch_priority(work, ids, n)` in C (0-based indices).
+  `daqp_set_branch_priority(work, ids, n)` in C (0-based indices);
+- `4`: the least fractional, the one whose distance to its nearest bound, relative to half the
+  distance between its bounds, is the smallest.
 
-The rule does not change the solution if the suboptimality tolerances are zero, but the number of
+The setting `child_order` selects which of the two children of a node is explored first:
+
+- `0` (default): the one whose bound of the binary constraint is nearest to the relaxation;
+- `1`: the one whose bound is farthest from the relaxation;
+- `2`: the one with the upper bound active;
+- `3`: the one with the lower bound active.
+
+The rule and the child order do not change the solution if the suboptimality tolerances are zero, but the number of
 nodes can differ substantially. In MPC with binary controls, the order of the constraints is often the
 order of the time steps; there, the rules `1` and `2` can explore considerably fewer nodes than
 the default.

@@ -44,6 +44,7 @@ cdef extern from "types.h":
         int eq_reduction;
         int presolve;
         int branching;
+        int child_order;
 
     ctypedef struct DAQPWorkspace:
         int n

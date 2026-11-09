@@ -31,6 +31,13 @@ const DAQP_BRANCHING_FIRST = 0
 const DAQP_BRANCHING_LAST = 1
 const DAQP_BRANCHING_MOST_FRACTIONAL = 2
 const DAQP_BRANCHING_PRIORITY = 3
+const DAQP_BRANCHING_LEAST_FRACTIONAL = 4
+
+# Child of a node explored first (setting `child_order`)
+const DAQP_CHILD_NEAREST = 0
+const DAQP_CHILD_FARTHEST = 1
+const DAQP_CHILD_UP = 2
+const DAQP_CHILD_DOWN = 3
 
 # Exit Flags
 const  FEASIBLE       = 5

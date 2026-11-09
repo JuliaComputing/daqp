@@ -105,6 +105,7 @@ struct DAQPSettings
     eq_reduction::Cint
     presolve::Cint
     branching::Cint
+    child_order::Cint
 end
 function DAQPSettings()
     settings = Ref{DyadDAQP.DAQPSettings}()

@@ -40,17 +40,29 @@ extern "C" {
 #define DAQP_BNB_MIN_SING_TOL 1e-14
 
 // Selection of the binary constraint to branch over (DAQPSettings.branching). The tree is explored
-// depth first and the bound nearest to the relaxation first, with any rule. Among the binary
-// constraints that the relaxation does not satisfy, the rule selects
-//   FIRST:           the first in the order of the constraints,
-//   LAST:            the last in the order of the constraints,
-//   MOST_FRACTIONAL: the one farthest from its nearest bound, relative to the distance between its bounds,
-//   PRIORITY:        the first in the list set with daqp_set_branch_priority, followed by the
-//                    constraints that are not in the list, in their order.
+// depth first, with any rule. Among the binary constraints that the relaxation does not satisfy, the
+// rule selects
+//   FIRST:            the first in the order of the constraints,
+//   LAST:             the last in the order of the constraints,
+//   MOST_FRACTIONAL:  the one farthest from its nearest bound, relative to the distance between its bounds,
+//   PRIORITY:         the first in the list set with daqp_set_branch_priority, followed by the
+//                     constraints that are not in the list, in their order,
+//   LEAST_FRACTIONAL: the one nearest to its nearest bound, relative to the distance between its bounds.
 #define DAQP_BRANCHING_FIRST 0
 #define DAQP_BRANCHING_LAST 1
 #define DAQP_BRANCHING_MOST_FRACTIONAL 2
 #define DAQP_BRANCHING_PRIORITY 3
+#define DAQP_BRANCHING_LEAST_FRACTIONAL 4
+
+// Which of the two children of a node is explored first (DAQPSettings.child_order):
+//   NEAREST:  the one whose bound of the binary constraint is nearest to the relaxation,
+//   FARTHEST: the one whose bound is farthest from the relaxation,
+//   UP:       the one with the upper bound active,
+//   DOWN:     the one with the lower bound active.
+#define DAQP_CHILD_NEAREST 0
+#define DAQP_CHILD_FARTHEST 1
+#define DAQP_CHILD_UP 2
+#define DAQP_CHILD_DOWN 3
 
 // Equality-reduction policy (DAQPSettings.eq_reduction). AUTO only reduces
 // solves that start from scratch, which the setup/update marks with

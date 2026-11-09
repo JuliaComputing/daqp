@@ -494,6 +494,24 @@ end
     H, f, A, bu, bl, sense = generate_test_MIQP(n, m, ms, nb)
     bu[ms+1], bl[ms+1] = 1.5, 1.2
     @test DyadDAQP.solve_parallel(models(H, f, A, bu, bl, sense))[3] == DyadDAQP.INFEASIBLE
+    # A portfolio that mixes branching rules and child orders
+    mix = [(DyadDAQP.DAQP_BRANCHING_FIRST, DyadDAQP.DAQP_CHILD_NEAREST),
+           (DyadDAQP.DAQP_BRANCHING_LAST, DyadDAQP.DAQP_CHILD_FARTHEST),
+           (DyadDAQP.DAQP_BRANCHING_MOST_FRACTIONAL, DyadDAQP.DAQP_CHILD_UP),
+           (DyadDAQP.DAQP_BRANCHING_LEAST_FRACTIONAL, DyadDAQP.DAQP_CHILD_DOWN)]
+    for trial in 1:5
+        H, f, A, bu, bl, sense = generate_test_MIQP(n, m, ms, nb)
+        ds = [DyadDAQP.Model() for _ in mix]
+        for (d, (rule, order)) in zip(ds, mix)
+            DyadDAQP.settings(d, Dict{Symbol,Any}(:branching => Cint(rule), :child_order => Cint(order)))
+            DyadDAQP.setup(d, H, f, A, bu, bl, sense)
+        end
+        fref = DyadDAQP.solve(models(H, f, A, bu, bl, sense; rules = 0:0)[1])[2]
+        x, fval, exitflag, _ = DyadDAQP.solve_parallel(ds)
+        @test exitflag == DyadDAQP.OPTIMAL
+        @test isapprox(fval, fref; rtol = 1e-9, atol = 1e-9)
+        @test all(xi -> min(abs(xi), abs(xi - 1)) < 1e-8, x[1:nb])
+    end
     # Models of different dimensions are rejected
     H2, f2, A2, bu2, bl2, sense2 = generate_test_MIQP(n + 1, m + 1, ms + 1, nb)
     ds = [models(H, f, A, bu, bl, sense; rules = 0:0); models(H2, f2, A2, bu2, bl2, sense2; rules = 1:1)]
@@ -505,6 +523,7 @@ end
     # binary constraints branches as the rule last
     Random.seed!(4321)
     nv, nbv = 14, 10
+    nodes_order = Dict((r, o) => Int[] for r in 0:4, o in 0:3)
     for trial in 1:10
         Mv = randn(nv, nv)
         Hv = Mv'Mv + I
@@ -513,9 +532,9 @@ end
         buv = [ones(nbv); fill(2.0, nv - nbv); 2.5 + 3rand()]
         blv = [zeros(nbv); fill(-2.0, nv - nbv); -1e30]
         sensev = Cint[fill(DyadDAQP.BINARY, nbv); zeros(Cint, nv - nbv + 1)]
-        function solve_rule(rule; priority = nothing)
+        function solve_rule(rule; priority = nothing, child_order = DyadDAQP.DAQP_CHILD_NEAREST)
             d = DyadDAQP.Model()
-            DyadDAQP.settings(d, Dict{Symbol,Any}(:branching => Cint(rule)))
+            DyadDAQP.settings(d, Dict{Symbol,Any}(:branching => Cint(rule), :child_order => Cint(child_order)))
             DyadDAQP.setup(d, Hv, fv, Av, buv, blv, sensev)
             priority === nothing || DyadDAQP.set_branch_priority(d, priority)
             return DyadDAQP.solve(d)
@@ -527,6 +546,19 @@ end
             @test exitflag == DyadDAQP.OPTIMAL
             @test isapprox(fval, f0; rtol = 1e-9, atol = 1e-9)
         end
+        # Every rule with every child order (the default child order is NEAREST)
+        for rule in (DyadDAQP.DAQP_BRANCHING_FIRST, DyadDAQP.DAQP_BRANCHING_LAST,
+                     DyadDAQP.DAQP_BRANCHING_MOST_FRACTIONAL, DyadDAQP.DAQP_BRANCHING_LEAST_FRACTIONAL),
+                order in (DyadDAQP.DAQP_CHILD_NEAREST, DyadDAQP.DAQP_CHILD_FARTHEST,
+                          DyadDAQP.DAQP_CHILD_UP, DyadDAQP.DAQP_CHILD_DOWN)
+            x, fval, exitflag, info = solve_rule(rule; child_order = order)
+            @test exitflag == DyadDAQP.OPTIMAL
+            @test isapprox(fval, f0; rtol = 1e-9, atol = 1e-9)
+            @test all(xi -> min(abs(xi), abs(xi - 1)) < 1e-8, x[1:nbv])
+            push!(nodes_order[(rule, order)], info.nodes)
+            rule == DyadDAQP.DAQP_BRANCHING_FIRST && order == DyadDAQP.DAQP_CHILD_NEAREST &&
+                @test info.nodes == i0.nodes
+        end
         _, fl, _, il = solve_rule(DyadDAQP.DAQP_BRANCHING_LAST)
         # The general constraint (not binary) in the list is skipped
         _, fp, ep, ip = solve_rule(DyadDAQP.DAQP_BRANCHING_PRIORITY; priority = [nv + 1; nbv:-1:1])
@@ -534,6 +566,13 @@ end
         @test isapprox(fp, f0; rtol = 1e-9, atol = 1e-9)
         @test ip.nodes == il.nodes
     end
+    # The child order changes the explored tree
+    for rule in (DyadDAQP.DAQP_BRANCHING_FIRST, DyadDAQP.DAQP_BRANCHING_LAST,
+                 DyadDAQP.DAQP_BRANCHING_MOST_FRACTIONAL, DyadDAQP.DAQP_BRANCHING_LEAST_FRACTIONAL)
+        @test length(unique(nodes_order[(rule, o)] for o in 0:3)) > 1
+    end
+    @test nodes_order[(DyadDAQP.DAQP_BRANCHING_MOST_FRACTIONAL, 0)] !=
+        nodes_order[(DyadDAQP.DAQP_BRANCHING_LEAST_FRACTIONAL, 0)]
     d = DyadDAQP.Model()
     DyadDAQP.setup(d, Matrix(1.0I, 2, 2), [-0.5, -0.5], zeros(0, 2), [1.0, 1.0], [0.0, 0.0], Cint[DyadDAQP.BINARY, 0])
     @test_throws ArgumentError DyadDAQP.set_branch_priority(d, [3])
@@ -544,7 +583,8 @@ end
     # Generated code holds the setting and the priority list (0-based indices)
     if !isnothing(Sys.which("gcc"))
         dg = DyadDAQP.Model()
-        DyadDAQP.settings(dg, Dict{Symbol,Any}(:branching => Cint(DyadDAQP.DAQP_BRANCHING_PRIORITY)))
+        DyadDAQP.settings(dg, Dict{Symbol,Any}(:branching => Cint(DyadDAQP.DAQP_BRANCHING_PRIORITY),
+                                               :child_order => Cint(DyadDAQP.DAQP_CHILD_DOWN)))
         DyadDAQP.setup(dg, Matrix(1.0I, 3, 3), [-0.4, -0.6, -0.5], zeros(0, 3), ones(3), zeros(3),
                        Cint[DyadDAQP.BINARY, DyadDAQP.BINARY, 0])
         DyadDAQP.set_branch_priority(dg, [2, 1])
@@ -558,6 +598,7 @@ end
             try
                 work = unsafe_load(Ptr{DyadDAQP.Workspace}(Base.Libc.Libdl.dlsym(handle, :daqp_work)))
                 @test unsafe_load(work.settings).branching == DyadDAQP.DAQP_BRANCHING_PRIORITY
+                @test unsafe_load(work.settings).child_order == DyadDAQP.DAQP_CHILD_DOWN
                 prio = Base.Libc.Libdl.dlsym(handle, :daqp_branch_priority)
                 @test unsafe_wrap(Array, Ptr{Cint}(prio), 2) == Cint[1, 0]
             finally

@@ -32,7 +32,8 @@ const char* SETTINGS_FIELDS[] = {
   "time_limit",
   "eq_reduction",
   "presolve",
-  "branching"
+  "branching",
+  "child_order"
 };
 
 
@@ -193,6 +194,7 @@ void mexFunction( int nlhs, mxArray *plhs[],
 		mxSetField(s, 0, "eq_reduction", mxCreateDoubleScalar(work->settings->eq_reduction));
 		mxSetField(s, 0, "presolve", mxCreateDoubleScalar(work->settings->presolve));
 		mxSetField(s, 0, "branching", mxCreateDoubleScalar(work->settings->branching));
+		mxSetField(s, 0, "child_order", mxCreateDoubleScalar(work->settings->child_order));
 		plhs[0] = s;
 	  }
 	}
@@ -218,6 +220,7 @@ void mexFunction( int nlhs, mxArray *plhs[],
 	  work->settings->eq_reduction= (int)mxGetScalar(mxGetField(s, 0, "eq_reduction"));
 	  work->settings->presolve= (int)mxGetScalar(mxGetField(s, 0, "presolve"));
 	  work->settings->branching= (int)mxGetScalar(mxGetField(s, 0, "branching"));
+	  work->settings->child_order= (int)mxGetScalar(mxGetField(s, 0, "child_order"));
 	  if(work->settings->rho_soft != old_rho_soft ||
 	     work->settings->w_soft != old_w_soft)
 	    daqp_refresh_soft_weights(work);

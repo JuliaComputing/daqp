@@ -81,8 +81,12 @@ typedef struct{
     // Presolve mixed-integer problems when they are set up or updated (1) or not (0)
     int presolve;
 
-    // Selection of the binary constraint to branch over: DAQP_BRANCHING_{FIRST,LAST,MOST_FRACTIONAL,PRIORITY}
+    // Selection of the binary constraint to branch over:
+    // DAQP_BRANCHING_{FIRST,LAST,MOST_FRACTIONAL,PRIORITY,LEAST_FRACTIONAL}
     int branching;
+
+    // Child of a node explored first: DAQP_CHILD_{NEAREST,FARTHEST,UP,DOWN}
+    int child_order;
 }DAQPSettings;
 
 
