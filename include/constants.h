@@ -52,6 +52,20 @@ extern "C" {
 #define DAQP_BRANCHING_MOST_FRACTIONAL 2
 #define DAQP_BRANCHING_PRIORITY 3
 
+// Node selection of branch and bound (DAQPSettings.node_selection).
+//   DEPTH_FIRST:     the tree is explored depth first (a stack of at most nb+1 nodes).
+//   BEST_FIRST_DIVE: the open node with the smallest lower bound (the deepest among equal bounds) is
+//                    selected, and the search dives depth first from it until the dive is pruned,
+//                    infeasible or integer feasible. The sibling of each node of the dive is stored
+//                    as an open node. At most DAQPSettings.node_pool_size open nodes are stored
+//                    (and at least nb+1): when the pool is nearly full, the remaining search
+//                    explores the subtree of each selected node depth first. Only the library
+//                    supports it; generated code searches depth first.
+#define DAQP_NODE_DEPTH_FIRST 0
+#define DAQP_NODE_BEST_FIRST_DIVE 1
+#define DAQP_DEFAULT_NODE_POOL_SIZE 16384
+#define DAQP_NODE_POOL_INIT 64 // Slots allocated initially (the pool grows on demand)
+
 // Equality-reduction policy (DAQPSettings.eq_reduction). AUTO only reduces
 // solves that start from scratch, which the setup/update marks with
 // DAQP_UPDATE_eliminate (daqp_quadprog, the interfaces' one-shot solves, and

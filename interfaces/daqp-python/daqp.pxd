@@ -44,6 +44,8 @@ cdef extern from "types.h":
         int eq_reduction;
         int presolve;
         int branching;
+        int node_selection;
+        int node_pool_size;
 
     ctypedef struct DAQPWorkspace:
         int n
@@ -107,6 +109,7 @@ cdef extern from "constants.h":
     cdef int DAQP_DEFAULT_CYCLE_TOL
     cdef double DAQP_DEFAULT_ETA
     cdef int DAQP_DEFAULT_ITER_LIMIT
+    cdef int DAQP_DEFAULT_NODE_POOL_SIZE
     cdef double DAQP_DEFAULT_RHO_SOFT
     cdef double DAQP_DEFAULT_W_SOFT
     cdef double  DAQP_DEFAULT_REL_SUBOPT

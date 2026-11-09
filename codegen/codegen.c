@@ -321,7 +321,10 @@ void write_daqp_settings_src(FILE*  f, DAQPSettings* settings, const char* prefi
     fprintf(f, "(c_float)%.20f,", settings->w_soft);
     fprintf(f, "%d,", settings->eq_reduction);
     fprintf(f, "%d,", settings->presolve);
-    fprintf(f, "%d", settings->branching);
+    fprintf(f, "%d,", settings->branching);
+    // Generated code has no pool of open nodes and searches depth first (see DAQPNodePool)
+    fprintf(f, "%d,", settings->node_selection);
+    fprintf(f, "%d", settings->node_pool_size);
     fprintf(f, "};\n\n");
 }
 
@@ -372,6 +375,7 @@ void write_daqp_bnb_src(FILE*  f, DAQPBnB* bnb, const int n, const char* prefix)
     if(bnb->n_priority > 0) fprintf(f, "%sbranch_priority, (int)%d, ", prefix, bnb->n_priority);
     else fprintf(f, "NULL, (int)0, "); // priority, n_priority
     fprintf(f, "NULL, "); // shared
+    fprintf(f, "NULL, "); // pool (depth-first search only)
 
     fprintf(f, "};\n\n");
 }

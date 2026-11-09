@@ -32,7 +32,9 @@ const char* SETTINGS_FIELDS[] = {
   "time_limit",
   "eq_reduction",
   "presolve",
-  "branching"
+  "branching",
+  "node_selection",
+  "node_pool_size"
 };
 
 
@@ -193,6 +195,8 @@ void mexFunction( int nlhs, mxArray *plhs[],
 		mxSetField(s, 0, "eq_reduction", mxCreateDoubleScalar(work->settings->eq_reduction));
 		mxSetField(s, 0, "presolve", mxCreateDoubleScalar(work->settings->presolve));
 		mxSetField(s, 0, "branching", mxCreateDoubleScalar(work->settings->branching));
+		mxSetField(s, 0, "node_selection", mxCreateDoubleScalar(work->settings->node_selection));
+		mxSetField(s, 0, "node_pool_size", mxCreateDoubleScalar(work->settings->node_pool_size));
 		plhs[0] = s;
 	  }
 	}
@@ -218,6 +222,8 @@ void mexFunction( int nlhs, mxArray *plhs[],
 	  work->settings->eq_reduction= (int)mxGetScalar(mxGetField(s, 0, "eq_reduction"));
 	  work->settings->presolve= (int)mxGetScalar(mxGetField(s, 0, "presolve"));
 	  work->settings->branching= (int)mxGetScalar(mxGetField(s, 0, "branching"));
+	  work->settings->node_selection= (int)mxGetScalar(mxGetField(s, 0, "node_selection"));
+	  work->settings->node_pool_size= (int)mxGetScalar(mxGetField(s, 0, "node_pool_size"));
 	  if(work->settings->rho_soft != old_rho_soft ||
 	     work->settings->w_soft != old_w_soft)
 	    daqp_refresh_soft_weights(work);

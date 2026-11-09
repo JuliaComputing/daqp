@@ -111,6 +111,26 @@ nodes can differ substantially. In MPC with binary controls, the order of the co
 order of the time steps; there, the rules `1` and `2` can explore considerably fewer nodes than
 the default.
 
+### Node selection
+The setting `node_selection` selects the order in which the nodes are explored:
+
+- `0` (default): depth first. The open nodes are a stack of at most `nb+1` nodes (`nb` binary
+  constraints), which generated code allocates statically.
+- `1`: best first with diving. The open node with the smallest lower bound (the deepest among equal
+  bounds) is selected, and the search dives from it, depth first and nearest bound first, until the
+  dive is pruned, infeasible or integer feasible. The other child of each node of the dive is stored
+  as an open node, with its fixed binary constraints and the working set of its parent, from which it
+  is warm started when it is selected. The search ends when the smallest lower bound of the open nodes
+  is pruned by the incumbent (with `abs_subopt` and `rel_subopt`).
+
+Best first stores at most `node_pool_size` open nodes (default 16384, and at least `nb+1`), in memory
+that is allocated by the first solve and enlarged as needed. If the pool is nearly full, the remainder
+of the search explores the subtree of each selected node depth first, which does not enlarge it.
+Generated code does not support best first and searches depth first. With zero suboptimality tolerances,
+the solution does not depend on the node selection, but the number of nodes does. Best first can
+explore fewer nodes when the lower bounds of the nodes are informative; in a portfolio of
+`daqp_solve_parallel` (`solve_parallel` in Julia), a best-first workspace complements depth-first ones.
+
 ### Presolve
 Mixed-integer problems with big-M constraints, such as $$y \le M b$$ with a binary $$b$$, often have
 weak relaxations that make branch and bound explore many nodes. Setting `presolve = 1` tightens

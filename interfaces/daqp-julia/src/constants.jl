@@ -32,6 +32,11 @@ const DAQP_BRANCHING_LAST = 1
 const DAQP_BRANCHING_MOST_FRACTIONAL = 2
 const DAQP_BRANCHING_PRIORITY = 3
 
+# Node selection of branch and bound (setting `node_selection`): depth first, or best first with
+# diving, which stores at most `node_pool_size` open nodes (see include/constants.h)
+const DAQP_NODE_DEPTH_FIRST = 0
+const DAQP_NODE_BEST_FIRST_DIVE = 1
+
 # Exit Flags
 const  FEASIBLE       = 5
 const  OPTIMAL_INEXACT   = 4

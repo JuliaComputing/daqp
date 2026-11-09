@@ -82,7 +82,8 @@ def solve(double[:, :] H, double[:] f, double[:, :] A,
           rel_subopt = DAQP_DEFAULT_REL_SUBOPT, abs_subopt = DAQP_DEFAULT_ABS_SUBOPT,
           sing_tol = DAQP_DEFAULT_SING_TOL, refactor_tol = DAQP_DEFAULT_REFACTOR_TOL,
           time_limit = 0, primal_start=None, dual_start=None,
-          eq_reduction = DAQP_EQ_REDUCTION_AUTO, presolve = 1, branching = 0):
+          eq_reduction = DAQP_EQ_REDUCTION_AUTO, presolve = 1, branching = 0,
+          node_selection = 0, node_pool_size = DAQP_DEFAULT_NODE_POOL_SIZE):
     """
     Solve the quadratic program      minimize       0.5 x'*H*x + f' x
                                     subject to   blower <= A x <= bupper
@@ -147,6 +148,8 @@ def solve(double[:, :] H, double[:] f, double[:, :] A,
        * eq_reduction : -1 disables, 0 selects automatic, 1 forces reduction
        * presolve   : 1 presolves mixed-integer problems (0 disables)
        * branching  : binary constraint to branch over: 0 first, 1 last, 2 most fractional, 3 priority list
+       * node_selection : branch and bound node selection: 0 depth first, 1 best first with diving
+       * node_pool_size : largest number of open nodes stored by best-first node selection
     See <https://darnstrom.github.io/daqp/parameters>`_ for all available settings.
 
     Returns
@@ -210,7 +213,8 @@ def solve(double[:, :] H, double[:] f, double[:, :] A,
     cdef DAQPSettings settings = [primal_tol, dual_tol, zero_tol, pivot_tol,
             progress_tol, cycle_tol, iter_limit, fval_bound,
             eps_prox, eta_prox, rho_soft, rel_subopt, abs_subopt, sing_tol, refactor_tol,
-            time_limit, w_soft, eq_reduction, presolve, branching]
+            time_limit, w_soft, eq_reduction, presolve, branching,
+            node_selection, node_pool_size]
     cdef DAQPResult res = [&x[0], lam_ptr, 0, 0, 0, 0, 0, 0, 0]
 
     if primal_start is None and dual_start is None:
@@ -604,7 +608,8 @@ cdef class Model:
         ``pivot_tol``, ``progress_tol``, ``cycle_tol``, ``iter_limit``,
         ``fval_bound``, ``eps_prox``, ``eta_prox``, ``rho_soft``, ``w_soft``,
         ``rel_subopt``, ``abs_subopt``, ``sing_tol``, ``refactor_tol``,
-        ``time_limit``, ``eq_reduction``, ``presolve``, ``branching``. Equality reduction uses -1 for off,
+        ``time_limit``, ``eq_reduction``, ``presolve``, ``branching``,
+        ``node_selection``, ``node_pool_size``. Equality reduction uses -1 for off,
         0 for automatic selection (which only applies to solves that start from
         scratch, so a warm-started model is not reduced), and 1 for forced on.
         """
@@ -632,6 +637,8 @@ cdef class Model:
             'eq_reduction': s.eq_reduction,
             'presolve':     s.presolve,
             'branching':    s.branching,
+            'node_selection': s.node_selection,
+            'node_pool_size': s.node_pool_size,
         }
 
     @settings.setter
@@ -662,6 +669,8 @@ cdef class Model:
         if 'eq_reduction' in new_settings: s.eq_reduction = new_settings['eq_reduction']
         if 'presolve'     in new_settings: s.presolve     = new_settings['presolve']
         if 'branching'    in new_settings: s.branching    = new_settings['branching']
+        if 'node_selection' in new_settings: s.node_selection = new_settings['node_selection']
+        if 'node_pool_size' in new_settings: s.node_pool_size = new_settings['node_pool_size']
         if s.rho_soft != old_rho_soft or s.w_soft != old_w_soft:
             daqp_refresh_soft_weights(self._work)
 

@@ -567,6 +567,108 @@ end
     end
 end
 
+@testset "BnB best-first node selection" begin
+    # Best first with diving finds the optimal solution of depth first (abs_subopt = 0) for every
+    # branching rule, with equality reduction off and on, also with a pool of open nodes that is too
+    # small for the search (the remainder is depth first)
+    Random.seed!(1357)
+    nv, nbv = 20, 14
+    dist(x) = min.(abs.(x), abs.(x .- 1))
+    peak(d) = ccall((:daqp_bnb_pool_peak, DyadDAQP.libdaqp), Cint, (Ptr{DyadDAQP.Workspace},), d.work)
+    # As in "BnB branching rules", with an equality constraint on two continuous variables
+    function problem()
+        Mv = randn(nv, nv)
+        Hv = Mv'Mv + I
+        fv = -Hv * [0.2 .+ 0.6 .* rand(nbv); fill(0.1, nv - nbv)]
+        Av = [ones(1, nbv) zeros(1, nv - nbv); zeros(1, nbv) 1 1 zeros(1, nv - nbv - 2)]
+        buv = [ones(nbv); fill(2.0, nv - nbv); 2.5 + 3rand(); 0.1]
+        blv = [zeros(nbv); fill(-2.0, nv - nbv); -1e30; 0.1]
+        sensev = Cint[fill(DyadDAQP.BINARY, nbv); zeros(Cint, nv - nbv + 1); DyadDAQP.EQUALITY]
+        return Hv, fv, Av, buv, blv, sensev
+    end
+    function model(H, f, A, bu, bl, sense; kwargs...)
+        d = DyadDAQP.Model()
+        DyadDAQP.settings(d, Dict{Symbol,Any}(k => Cint(v) for (k, v) in kwargs))
+        DyadDAQP.setup(d, H, f, A, bu, bl, sense)
+        return d
+    end
+    best_first = DyadDAQP.DAQP_NODE_BEST_FIRST_DIVE
+    @test DyadDAQP.settings(DyadDAQP.Model()).node_selection == DyadDAQP.DAQP_NODE_DEPTH_FIRST
+    for trial in 1:5
+        H, f, A, bu, bl, sense = problem()
+        for eq_reduction in (DyadDAQP.DAQP_EQ_REDUCTION_OFF, DyadDAQP.DAQP_EQ_REDUCTION_ON), rule in 0:2
+            _, f0, e0, i0 = DyadDAQP.solve(model(H, f, A, bu, bl, sense; eq_reduction, branching = rule))
+            d = model(H, f, A, bu, bl, sense; eq_reduction, branching = rule, node_selection = best_first)
+            x, fval, exitflag, info = DyadDAQP.solve(d)
+            @test e0 == exitflag == DyadDAQP.OPTIMAL
+            @test isapprox(fval, f0; rtol = 1e-9, atol = 1e-9)
+            @test all(dist(x[1:nbv]) .< 1e-8)
+            @test i0.nodes > 1 && peak(d) > 0
+            # A repeated solve (the root is warm started)
+            @test isapprox(DyadDAQP.solve(d)[2], f0; rtol = 1e-9, atol = 1e-9)
+        end
+        _, f0, _, i0 = DyadDAQP.solve(model(H, f, A, bu, bl, sense))
+        for pool in (0, 20)
+            d = model(H, f, A, bu, bl, sense; node_selection = best_first, node_pool_size = pool)
+            _, fval, exitflag, info = DyadDAQP.solve(d)
+            @test exitflag == DyadDAQP.OPTIMAL
+            @test isapprox(fval, f0; rtol = 1e-9, atol = 1e-9)
+            @test peak(d) <= max(pool, nbv + 1)
+            pool == 0 && @test info.nodes == i0.nodes # Depth first throughout
+        end
+    end
+
+    # Singular Hessian (the continuous variables have no curvature)
+    for trial in 1:3
+        H, f, A, bu, bl, sense = problem()
+        H[nbv+1:end, :] .= 0; H[:, nbv+1:end] .= 0
+        _, f0, e0, _ = DyadDAQP.solve(model(H, f, A, bu, bl, sense))
+        _, fval, exitflag, _ = DyadDAQP.solve(model(H, f, A, bu, bl, sense; node_selection = best_first))
+        @test e0 > 0 && exitflag > 0
+        @test isapprox(fval, f0; rtol = 1e-6, atol = 1e-6)
+    end
+
+    # Infeasible: the binaries must sum to a value in (1, 2)
+    H, f, A, bu, bl, sense = problem()
+    bu[nv+1], bl[nv+1] = 1.5, 1.2
+    @test DyadDAQP.solve(model(H, f, A, bu, bl, sense; node_selection = best_first))[3] == DyadDAQP.INFEASIBLE
+
+    # A portfolio of depth-first and best-first threads
+    for trial in 1:5
+        H, f, A, bu, bl, sense = problem()
+        _, f0, _, _ = DyadDAQP.solve(model(H, f, A, bu, bl, sense))
+        ds = [model(H, f, A, bu, bl, sense; branching = 0),
+              model(H, f, A, bu, bl, sense; branching = 2, node_selection = best_first),
+              model(H, f, A, bu, bl, sense; branching = 1)]
+        x, fval, exitflag, info = DyadDAQP.solve_parallel(ds)
+        @test exitflag == DyadDAQP.OPTIMAL
+        @test isapprox(fval, f0; rtol = 1e-9, atol = 1e-9)
+        @test all(dist(x[1:nbv]) .< 1e-8)
+    end
+
+    # Generated code holds the setting, and its sources (without the pool of open nodes, which only
+    # the library allocates) are linked without other symbols than those of libm and libc
+    if !isnothing(Sys.which("gcc")) && Sys.islinux()
+        dg = DyadDAQP.Model()
+        DyadDAQP.settings(dg, Dict{Symbol,Any}(:node_selection => Cint(best_first)))
+        DyadDAQP.setup(dg, Matrix(1.0I, 3, 3), [-0.4, -0.6, -0.5], zeros(0, 3), ones(3), zeros(3),
+                       Cint[DyadDAQP.BINARY, DyadDAQP.BINARY, 0])
+        mktempdir() do dir
+            DyadDAQP.codegen(dg; dir, src = true)
+            library = joinpath(dir, "generated." * Base.Libc.Libdl.dlext)
+            sources = filter(endswith(".c"), readdir(dir; join = true))
+            run(`gcc -shared -fPIC -I$dir $sources -Wl,--no-undefined -lm -o $library`)
+            handle = Base.Libc.Libdl.dlopen(library)
+            try
+                work = unsafe_load(Ptr{DyadDAQP.Workspace}(Base.Libc.Libdl.dlsym(handle, :daqp_work)))
+                @test unsafe_load(work.settings).node_selection == best_first
+            finally
+                Base.Libc.Libdl.dlclose(handle)
+            end
+        end
+    end
+end
+
 @testset "BnB root warm start" begin
     Random.seed!(4321)
     H,f,A,bu,bl,sense = generate_test_MIQP(20,60,20,10)

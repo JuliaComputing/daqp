@@ -223,6 +223,33 @@ static c_float daqp_bnb_sing_tol(DAQPWorkspace* work){
     return tol;
 }
 
+// Store the relaxation of the node being processed (in work->u) as the incumbent
+static void daqp_bnb_new_incumbent(DAQPWorkspace* work, const c_float c, const c_float lb,
+        c_float* fval_best, c_float** swp_ptr){
+    *fval_best = work->fval;
+    work->settings->fval_bound = daqp_bnb_bound(*fval_best,c+daqp_bnb_reg(work->u,lb,work),
+            lb,work->settings);
+    daqp_bnb_publish(work,c);
+    *swp_ptr=work->xold; work->xold= work->u; work->u=*swp_ptr; // Store feasible sol
+}
+
+// Individual relaxations are often too short to reach the timer check
+// in daqp_ldp, so also enforce the limit across the BnB tree.
+static int daqp_bnb_time_exceeded(DAQPWorkspace* work){
+#ifdef PROFILING
+    if(work->timer != NULL && (work->bnb->nodecount&31)==0){
+        toc((DAQPtimer*)work->timer);
+        if(get_time((DAQPtimer*)work->timer) > work->settings->time_limit) return 1;
+    }
+#else
+    (void)work;
+#endif
+    return 0;
+}
+
+static int daqp_bnb_best_first(DAQPWorkspace* work, const c_float c, const c_float lb,
+        c_float* fval_best, c_float** swp_ptr, int* explored);
+
 int daqp_bnb(DAQPWorkspace* work){
     return daqp_bnb_lb(work,-DAQP_INF);
 }
@@ -279,8 +306,9 @@ int daqp_bnb_lb(DAQPWorkspace* work, const c_float lb){
 
     exitflag = DAQP_EXIT_INFEASIBLE;
     int explored = 1; // The tree is explored (not stopped early)
-    // Start tree exploration
-    while( work->bnb->n_nodes > 0 ){
+    if(work->settings->node_selection == DAQP_NODE_BEST_FIRST_DIVE && work->bnb->pool != NULL)
+        exitflag = daqp_bnb_best_first(work,c,lb,&fval_best,&swp_ptr,&explored);
+    else while( work->bnb->n_nodes > 0 ){ // Depth-first tree exploration
         // Bound from the incumbents of other threads (see daqp_solve_parallel)
         if(daqp_bnb_sync(work,c)){
             explored = 0;
@@ -293,18 +321,11 @@ int daqp_bnb_lb(DAQPWorkspace* work, const c_float lb){
         exitflag = daqp_process_node(node,work); // Solve relaxation
         if(node->depth < 0 && exitflag > 0 && work->bnb->root_WS != NULL)
             work->bnb->n_root_WS = daqp_bnb_store_ws(work->bnb->root_WS,work);
-#ifdef PROFILING
-        // Individual relaxations are often too short to reach the timer check
-        // in daqp_ldp, so also enforce the limit across the BnB tree.
-        if(work->timer != NULL && (work->bnb->nodecount&31)==0){
-            toc((DAQPtimer*)work->timer);
-            if(get_time((DAQPtimer*)work->timer) > work->settings->time_limit){
-                exitflag = DAQP_EXIT_TIMELIMIT;
-                explored = 0;
-                break;
-            }
+        if(daqp_bnb_time_exceeded(work)){
+            exitflag = DAQP_EXIT_TIMELIMIT;
+            explored = 0;
+            break;
         }
-#endif
         // Cut conditions
         if(exitflag==DAQP_EXIT_INFEASIBLE) continue; // Dominance cut
         if(exitflag<0){ // Inner solver failed => exit loop
@@ -314,16 +335,10 @@ int daqp_bnb_lb(DAQPWorkspace* work, const c_float lb){
 
         // Find index to branch over
         branch_id = daqp_get_branch_id(work);
-        if(branch_id==DAQP_EMPTY_IND){// Nothing to branch over => integer feasible
-            fval_best = work->fval;
-            work->settings->fval_bound = daqp_bnb_bound(fval_best,c+daqp_bnb_reg(work->u,lb,work),
-                    lb,work->settings);
-            daqp_bnb_publish(work,c);
-            swp_ptr=work->xold; work->xold= work->u; work->u=swp_ptr; // Store feasible sol
-        }
-        else{
+        if(branch_id==DAQP_EMPTY_IND) // Nothing to branch over => integer feasible
+            daqp_bnb_new_incumbent(work,c,lb,&fval_best,&swp_ptr);
+        else
             daqp_spawn_children(node,branch_id, work);
-        }
     }
 
     // Exploration completed
@@ -347,8 +362,23 @@ int daqp_bnb_lb(DAQPWorkspace* work, const c_float lb){
     }
 }
 
+// Solve the relaxation of node, for which the working set has been set up
+static int daqp_bnb_solve_relaxation(DAQPNode* node, DAQPWorkspace* work){
+    int exitflag = daqp_ldp(work);
+    work->bnb->itercount += work->iterations;
+
+    if(exitflag == DAQP_EXIT_CYCLE){// Try to repair (cold start)
+        // A cycle can be caused by stale cached forward-substitution data.
+        // Force the retained fixed prefix to be recomputed during repair.
+        work->reuse_ind=0;
+        if(daqp_setup_cold_bnb(node,work) < 0) return DAQP_EXIT_INFEASIBLE;
+        exitflag = daqp_ldp(work);
+        work->bnb->itercount += work->iterations;
+    }
+    return exitflag;
+}
+
 int daqp_process_node(DAQPNode* node, DAQPWorkspace* work){
-    int exitflag;
     work->bnb->nodecount+=1;
     if(node->depth >=0){
         // Fix a binary constraints
@@ -371,20 +401,7 @@ int daqp_process_node(DAQPNode* node, DAQPWorkspace* work){
         }
         // Add binary constraint
     }
-    // Solve relaxation
-    exitflag = daqp_ldp(work);
-    work->bnb->itercount += work->iterations;
-
-    if(exitflag == DAQP_EXIT_CYCLE){// Try to repair (cold start)
-        // A cycle can be caused by stale cached forward-substitution data.
-        // Force the retained fixed prefix to be recomputed during repair.
-        work->reuse_ind=0;
-        if(daqp_setup_cold_bnb(node,work) < 0) return DAQP_EXIT_INFEASIBLE;
-        exitflag = daqp_ldp(work);
-        work->bnb->itercount += work->iterations;
-    }
-
-    return exitflag;
+    return daqp_bnb_solve_relaxation(node,work);
 }
 
 // Whether the binary constraint id needs branching at the node being processed: it is not fixed and the
@@ -519,4 +536,201 @@ int daqp_add_upper_lower(const int add_id, DAQPWorkspace* work){
 int daqp_setup_cold_bnb(DAQPNode* node,DAQPWorkspace *work){
     daqp_node_cleanup_workspace(work->bnb->n_clean,work);
     return daqp_bnb_add_fixed_ids(node,work);
+}
+
+/*
+ * Best-first search with diving (DAQPSettings.node_selection = DAQP_NODE_BEST_FIRST_DIVE).
+ *
+ * The open node with the smallest lower bound is selected from the pool (see DAQPNodePool), and
+ * the search dives from it: the child nearest to the relaxation is processed next, which only adds
+ * one constraint to the working set, until the dive is pruned, infeasible or integer feasible. The
+ * other child is stored as an open node with its path of fixed binary constraints and the working
+ * set of its parent. When an open node is selected, the fixed binary constraints that its path has
+ * in common with the path of the previous node are retained in the working set, the remaining ones
+ * are added, and the working set of its parent is loaded as a warm start.
+ *
+ * The open nodes are pruned with the bound of the incumbent when they are selected. The lower
+ * bounds in the heap are hence not below the smallest one, and the search ends when it is pruned
+ * (which applies abs_subopt and rel_subopt to the global lower bound).
+ *
+ * At most max_cap nodes are stored. A depth-first search from a selected node stores at most one
+ * node per depth (nb). If storing a node would leave less room than that, the subsequent nodes are
+ * stored on a stack instead, which is emptied before the next node is selected from the heap: the
+ * subtree of each selected node is then explored depth first, and the heap does not grow.
+ */
+
+static int* daqp_pool_path(DAQPNodePool* pool, const int slot){
+    return pool->data+(size_t)slot*(pool->path_len+pool->ws_len);
+}
+
+// Whether open node a is selected before b: a smaller lower bound, or deeper for equal bounds
+static int daqp_pool_before(DAQPNodePool* pool, const int a, const int b){
+    const DAQPPoolNode *na = pool->nodes+a, *nb = pool->nodes+b;
+    return na->lb < nb->lb || (na->lb == nb->lb && na->depth > nb->depth);
+}
+
+static void daqp_pool_heap_push(DAQPNodePool* pool, const int slot){
+    int i = pool->n_heap++, parent;
+    while(i > 0 && daqp_pool_before(pool,slot,pool->heap[parent = (i-1)/2])){
+        pool->heap[i] = pool->heap[parent];
+        i = parent;
+    }
+    pool->heap[i] = slot;
+}
+
+static int daqp_pool_heap_pop(DAQPNodePool* pool){
+    const int top = pool->heap[0], last = pool->heap[--pool->n_heap];
+    int i = 0, child;
+    while((child = 2*i+1) < pool->n_heap){
+        if(child+1 < pool->n_heap && daqp_pool_before(pool,pool->heap[child+1],pool->heap[child])) child++;
+        if(!daqp_pool_before(pool,pool->heap[child],last)) break;
+        pool->heap[i] = pool->heap[child];
+        i = child;
+    }
+    pool->heap[i] = last;
+    return top;
+}
+
+// Store the open node with the path fixed_ids[0..depth-1] followed by bin_id and the lower bound
+// lb, to be warm started from the current working set. *lifo is set when the nodes are to be
+// stored on the stack (see above). Returns 0 if there is no room (not reached, see above).
+static int daqp_pool_store(DAQPWorkspace* work, const int depth, const int bin_id, const c_float lb,
+        int* lifo){
+    DAQPNodePool* pool = work->bnb->pool;
+    const int n_open = pool->n_heap+pool->n_stack, reserve = work->bnb->nb;
+    int i, slot, *path;
+    // Allocate the room for this node and a subsequent depth-first search
+    while(pool->cap < pool->max_cap && n_open+1+reserve > pool->cap)
+        if(!pool->grow(pool)) pool->max_cap = pool->cap; // Out of memory
+    if(n_open+1+reserve > pool->max_cap) *lifo = 1;
+    if(n_open >= pool->max_cap) return 0;
+
+    slot = pool->n_free > 0 ? pool->free_slots[--pool->n_free] : pool->n_slots++;
+    path = daqp_pool_path(pool,slot);
+    for(i = 0; i < depth; i++) path[i] = work->bnb->fixed_ids[i];
+    path[depth] = bin_id;
+    pool->nodes[slot].depth = depth;
+    pool->nodes[slot].lb = lb;
+    pool->nodes[slot].n_ws = daqp_bnb_store_ws(path+pool->path_len,work);
+    if(*lifo) pool->stack[pool->n_stack++] = slot;
+    else daqp_pool_heap_push(pool,slot);
+    if(n_open+1 > pool->peak) pool->peak = n_open+1;
+    return 1;
+}
+
+// Select an open node that is not pruned: from the stack if it is not empty, else the one with the
+// smallest lower bound. Returns its slot, or -1 if there is none (the search is completed).
+static int daqp_pool_select(DAQPWorkspace* work){
+    DAQPNodePool* pool = work->bnb->pool;
+    const c_float bound = 2*work->settings->fval_bound;
+    int slot;
+    while(pool->n_stack > 0){
+        slot = pool->stack[--pool->n_stack];
+        if(pool->nodes[slot].lb <= bound) return slot;
+        pool->free_slots[pool->n_free++] = slot;
+    }
+    if(pool->n_heap == 0) return -1;
+    slot = daqp_pool_heap_pop(pool);
+    if(pool->nodes[slot].lb <= bound) return slot;
+    pool->n_heap = 0; // The bounds of all other open nodes are at least as large
+    return -1;
+}
+
+// Set up the working set for the open node in slot (as node) and solve its relaxation
+static int daqp_bnb_process_open(const int slot, DAQPNode* node, DAQPWorkspace* work){
+    DAQPBnB* bnb = work->bnb;
+    DAQPNodePool* pool = bnb->pool;
+    const int* path = daqp_pool_path(pool,slot);
+    const int depth = pool->nodes[slot].depth;
+    int i, common, infeasible;
+    bnb->nodecount+=1;
+    // The fixed binary constraints in the common prefix of the paths of the previous node and this
+    // node are retained (those that are in the working set, see daqp_bnb_add_fixed_ids)
+    for(common = 0; common <= node->depth && common <= depth; common++)
+        if(bnb->fixed_ids[common] != path[common]) break;
+    if(bnb->n_clean > bnb->neq+common) bnb->n_clean = bnb->neq+common;
+    daqp_node_cleanup_workspace(bnb->n_clean,work);
+    for(i = common; i <= depth; i++) bnb->fixed_ids[i] = path[i];
+    node->depth = depth;
+    node->bin_id = path[depth];
+    node->lb = pool->nodes[slot].lb;
+    infeasible = daqp_bnb_add_fixed_ids(node,work) < 0;
+    if(!infeasible) daqp_bnb_load_ws(path+pool->path_len,pool->nodes[slot].n_ws,work);
+    pool->free_slots[pool->n_free++] = slot;
+    return infeasible ? DAQP_EXIT_INFEASIBLE : daqp_bnb_solve_relaxation(node,work);
+}
+
+// Add the binary constraint of node, a child of the previous node, and solve its relaxation
+static int daqp_bnb_process_child(DAQPNode* node, DAQPWorkspace* work){
+    work->bnb->nodecount+=1;
+    if(node->depth >= 0){
+        work->bnb->fixed_ids[node->depth] = node->bin_id;
+        daqp_add_upper_lower(node->bin_id,work);
+        work->sense[DAQP_REMOVE_LOWER_FLAG(node->bin_id)] |= DAQP_IMMUTABLE; //Equality
+        if(work->sing_ind != DAQP_EMPTY_IND){ // Need to cold start to not miss integer feasible
+            if(daqp_setup_cold_bnb(node,work) < 0) return DAQP_EXIT_INFEASIBLE;
+        }
+    }
+    return daqp_bnb_solve_relaxation(node,work);
+}
+
+// The search from the root, which daqp_bnb_lb has set up as tree[0]. Returns the exit flag of the
+// latest node (DAQP_EXIT_TIMELIMIT if the search is stopped)
+static int daqp_bnb_best_first(DAQPWorkspace* work, const c_float c, const c_float lb,
+        c_float* fval_best, c_float** swp_ptr, int* explored){
+    DAQPBnB* bnb = work->bnb;
+    DAQPNodePool* pool = bnb->pool;
+    // The node being processed; daqp_get_branch_id sets the lower bound of the child that is
+    // explored first in tree[1] and that of the other child in tree[0]
+    DAQPNode* node = bnb->tree;
+    int exitflag = DAQP_EXIT_INFEASIBLE, branch_id, slot = -1, lifo = 0, dive = 1;
+    pool->n_heap = pool->n_stack = pool->n_free = pool->n_slots = pool->peak = 0;
+    bnb->n_nodes = 0;
+    while(1){
+        if(daqp_bnb_sync(work,c)){
+            *explored = 0;
+            exitflag = DAQP_EXIT_TIMELIMIT;
+            break;
+        }
+        if(dive){ // The next node of the dive (the root first)
+            dive = 0;
+            if(node->lb > 2*work->settings->fval_bound) continue;
+            exitflag = daqp_bnb_process_child(node,work);
+        }
+        else{
+            if((slot = daqp_pool_select(work)) < 0) break;
+            exitflag = daqp_bnb_process_open(slot,node,work);
+        }
+        if(node->depth < 0 && exitflag > 0 && bnb->root_WS != NULL)
+            bnb->n_root_WS = daqp_bnb_store_ws(bnb->root_WS,work);
+        if(daqp_bnb_time_exceeded(work)){
+            exitflag = DAQP_EXIT_TIMELIMIT;
+            *explored = 0;
+            break;
+        }
+        if(exitflag==DAQP_EXIT_INFEASIBLE) continue; // Dominance cut
+        if(exitflag<0){ // Inner solver failed => exit loop
+            *explored = 0;
+            break;
+        }
+
+        branch_id = daqp_get_branch_id(work);
+        if(branch_id==DAQP_EMPTY_IND){ // Integer feasible
+            daqp_bnb_new_incumbent(work,c,lb,fval_best,swp_ptr);
+            continue;
+        }
+        // Store the child that is explored later (unless pruned) and dive into the other one
+        if(node->lb <= 2*work->settings->fval_bound &&
+                !daqp_pool_store(work,node->depth+1,DAQP_TOGGLE_LOWER_FLAG(branch_id),node->lb,&lifo)){
+            exitflag = DAQP_EXIT_UNSUPPORTED;
+            *explored = 0;
+            break;
+        }
+        node->depth += 1;
+        node->bin_id = branch_id;
+        node->lb = (node+1)->lb;
+        dive = 1;
+    }
+    pool->n_heap = pool->n_stack = 0;
+    return exitflag;
 }

@@ -83,6 +83,11 @@ typedef struct{
 
     // Selection of the binary constraint to branch over: DAQP_BRANCHING_{FIRST,LAST,MOST_FRACTIONAL,PRIORITY}
     int branching;
+
+    // Node selection of branch and bound: DAQP_NODE_{DEPTH_FIRST,BEST_FIRST_DIVE}
+    int node_selection;
+    // Largest number of open nodes that DAQP_NODE_BEST_FIRST_DIVE stores (see DAQPNodePool)
+    int node_pool_size;
 }DAQPSettings;
 
 
@@ -93,6 +98,41 @@ typedef struct{
     int WS_end;
     c_float lb; // Lower bound on internal objective
 }DAQPNode;
+
+/*
+ * Open nodes of the best-first search (DAQPSettings.node_selection = DAQP_NODE_BEST_FIRST_DIVE).
+ * A node is stored in a slot of its own, which holds the path of fixed binary constraints from the
+ * root (path_len ints, of which depth+1 are used) followed by the working set of its parent
+ * (ws_len ints, of which n_ws are used). The open nodes are ordered by their lower bound in the
+ * binary heap, or are on the stack once the pool is nearly full (see daqp_bnb_best_first).
+ * Allocated by the library (see daqp_bnb_setup_pool) and grown up to max_cap slots by grow; it
+ * is NULL in generated code, which hence always searches depth first.
+ */
+typedef struct{
+    c_float lb; // Lower bound on internal objective
+    int depth;
+    int n_ws;
+}DAQPPoolNode;
+
+typedef struct DAQPNodePool{
+    DAQPPoolNode* nodes;
+    int* data; // Slot k: data[k*(path_len+ws_len)...]
+    int path_len;
+    int ws_len;
+
+    int* heap; // Slots of open nodes, a binary heap ordered by (lb, -depth)
+    int n_heap;
+    int* stack; // Slots of open nodes that are explored depth first
+    int n_stack;
+    int* free_slots; // Slots that have been released
+    int n_free;
+    int n_slots; // Number of slots that have been used (in use or released)
+
+    int cap; // Number of slots allocated
+    int max_cap; // Largest number of slots
+    int peak; // Largest number of open nodes stored during the latest search
+    int (*grow)(struct DAQPNodePool* pool); // Enlarges cap (returns 0 if it cannot)
+}DAQPNodePool;
 
 typedef struct{
     int* bin_ids;
@@ -123,6 +163,8 @@ typedef struct{
     int n_priority;
 
     void* shared; // DAQPBnBShared of a parallel solve (see daqp_solve_parallel), else NULL
+
+    DAQPNodePool* pool; // Open nodes of DAQP_NODE_BEST_FIRST_DIVE (NULL: depth first)
 }DAQPBnB;
 
 typedef struct{

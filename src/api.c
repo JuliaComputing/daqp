@@ -21,6 +21,9 @@ void daqp_solve(DAQPResult *res, DAQPWorkspace *work){
         return;
     }
     reduced = daqp_eq_install(work);
+    // The pool of open nodes is sized for the problem that is solved (possibly the reduced one)
+    if(work->bnb != NULL && work->settings->node_selection == DAQP_NODE_BEST_FIRST_DIVE)
+        daqp_bnb_setup_pool(work);
 #ifdef PROFILING
     DAQPtimer timer;
     tic(&timer);
@@ -262,6 +265,7 @@ int setup_daqp_bnb(DAQPWorkspace* work, int* sense, int nb, int ns){
         work->bnb->priority = NULL; // Set by daqp_set_branch_priority
         work->bnb->n_priority = 0;
         work->bnb->shared = NULL; // Set by daqp_solve_parallel
+        work->bnb->pool = NULL; // Allocated by the first best-first solve
     }
     return 1;
 }
@@ -285,6 +289,80 @@ int daqp_set_branch_priority(DAQPWorkspace* work, const int* ids, const int n){
     work->bnb->priority = p;
     work->bnb->n_priority = n;
     return 1;
+}
+
+// Reallocate the slots of the pool of open nodes (see DAQPNodePool) to cap.
+// Returns 0 if the memory cannot be allocated (the pool then keeps its slots).
+static int daqp_bnb_resize_pool(DAQPNodePool* pool, const int cap){
+    const size_t stride = (size_t)(pool->path_len+pool->ws_len);
+    void* p;
+    if((p = realloc(pool->nodes, cap*sizeof(DAQPPoolNode))) == NULL) return 0;
+    pool->nodes = p;
+    if((p = realloc(pool->data, cap*stride*sizeof(int))) == NULL) return 0;
+    pool->data = p;
+    if((p = realloc(pool->heap, cap*sizeof(int))) == NULL) return 0;
+    pool->heap = p;
+    if((p = realloc(pool->stack, cap*sizeof(int))) == NULL) return 0;
+    pool->stack = p;
+    if((p = realloc(pool->free_slots, cap*sizeof(int))) == NULL) return 0;
+    pool->free_slots = p;
+    pool->cap = cap;
+    return 1;
+}
+
+// Enlarge the pool to twice its slots, at most max_cap (returns 0 if it cannot be enlarged)
+static int daqp_bnb_grow_pool(DAQPNodePool* pool){
+    const int cap = 2*pool->cap > pool->max_cap ? pool->max_cap : 2*pool->cap;
+    return cap > pool->cap && daqp_bnb_resize_pool(pool, cap);
+}
+
+void daqp_bnb_free_pool(DAQPWorkspace* work){
+    DAQPNodePool* pool = work->bnb != NULL ? work->bnb->pool : NULL;
+    if(pool == NULL) return;
+    free(pool->nodes);
+    free(pool->data);
+    free(pool->heap);
+    free(pool->stack);
+    free(pool->free_slots);
+    free(pool);
+    work->bnb->pool = NULL;
+}
+
+// Set up the pool of open nodes of DAQP_NODE_BEST_FIRST_DIVE for the problem in the workspace
+// (DAQPSettings.node_pool_size slots at most, and at least nb+1, which a depth-first search needs).
+// A pool whose slots are too small is reallocated. Returns 1 on success and -1 if the memory cannot
+// be allocated (the search is then depth first).
+int daqp_bnb_setup_pool(DAQPWorkspace* work){
+    int i, ns = 0, path_len, ws_len, max_cap;
+    DAQPNodePool* pool;
+    if(work->bnb == NULL) return -1;
+    for(i = 0; i < work->m; i++) if(work->sense[i] & DAQP_SOFT) ns++;
+    path_len = work->bnb->nb+1;
+    ws_len = work->n+ns+1; // The size of the working set
+    max_cap = work->settings->node_pool_size > path_len ? work->settings->node_pool_size : path_len;
+    pool = work->bnb->pool;
+    if(pool != NULL && (pool->path_len < path_len || pool->ws_len < ws_len))
+        daqp_bnb_free_pool(work);
+    if(work->bnb->pool == NULL){
+        pool = calloc(1, sizeof(DAQPNodePool));
+        if(pool == NULL) return -1;
+        pool->path_len = path_len;
+        pool->ws_len = ws_len;
+        pool->grow = daqp_bnb_grow_pool;
+        work->bnb->pool = pool;
+        // Enlarged on demand by the search (see daqp_pool_store in bnb.c)
+        if(!daqp_bnb_resize_pool(pool, max_cap < DAQP_NODE_POOL_INIT ? max_cap : DAQP_NODE_POOL_INIT)){
+            daqp_bnb_free_pool(work);
+            return -1;
+        }
+    }
+    pool->max_cap = max_cap;
+    return 1;
+}
+
+// The largest number of open nodes that the latest best-first search stored (0 if none)
+int daqp_bnb_pool_peak(DAQPWorkspace* work){
+    return (work->bnb != NULL && work->bnb->pool != NULL) ? work->bnb->pool->peak : 0;
 }
 
 // Form the binary constraints of branch and bound from the senses of the m
@@ -359,6 +437,7 @@ void free_daqp_bnb(DAQPWorkspace* work){
         free(work->bnb->xtmp);
         free(work->bnb->ps_qp);
         free(work->bnb->priority);
+        daqp_bnb_free_pool(work);
         free(work->bnb);
         work->bnb = NULL;
     }
@@ -647,6 +726,8 @@ void daqp_default_settings(DAQPSettings* settings){
     settings->eq_reduction = DAQP_EQ_REDUCTION_AUTO;
     settings->presolve = 1;
     settings->branching = DAQP_BRANCHING_FIRST;
+    settings->node_selection = DAQP_NODE_DEPTH_FIRST;
+    settings->node_pool_size = DAQP_DEFAULT_NODE_POOL_SIZE;
 }
 
 /* Remove redundant constraints*/
