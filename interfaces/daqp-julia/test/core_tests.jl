@@ -494,12 +494,15 @@ end
     H, f, A, bu, bl, sense = generate_test_MIQP(n, m, ms, nb)
     bu[ms+1], bl[ms+1] = 1.5, 1.2
     @test DyadDAQP.solve_parallel(models(H, f, A, bu, bl, sense))[3] == DyadDAQP.INFEASIBLE
-    # The relaxation objective exceeds the default bound (a soft constraint with a large slack), which
-    # the single solve reports as infeasible at the root; the parallel solve must not shift that bound
+    # A large linear term makes the internal objective exceed the default bound DAQP_INF (finite) while
+    # the objective J (with a soft constraint with a large slack) does not: the single and the parallel
+    # solve agree
     Hs, fs, As = Matrix(1.0I, 2, 2), [1e18, 1e18], [1.0 1.0]
     bus, bls, senses = [1.0, 1e3, 1e30], [0.0, -1e3, 1e10], Cint[DyadDAQP.BINARY, 0, DyadDAQP.SOFT]
-    @test DyadDAQP.solve(models(Hs, fs, As, bus, bls, senses; rules = 0:0)[1])[3] == DyadDAQP.INFEASIBLE
-    @test DyadDAQP.solve_parallel(models(Hs, fs, As, bus, bls, senses))[3] == DyadDAQP.INFEASIBLE
+    xs, fvs, es = DyadDAQP.solve(models(Hs, fs, As, bus, bls, senses; rules = 0:0)[1])
+    xp, fvp, ep = DyadDAQP.solve_parallel(models(Hs, fs, As, bus, bls, senses))
+    @test es > 0 && ep == es
+    @test isapprox(fvp, fvs; rtol = 1e-9) && isapprox(xp, xs; rtol = 1e-9)
     # Models whose settings change the problem (here the cutoff fval_bound) are rejected
     ds = models(H, f, A, bu, bl, sense; rules = 0:1)
     DyadDAQP.settings(ds[1], Dict{Symbol,Any}(:fval_bound => 0.0))
