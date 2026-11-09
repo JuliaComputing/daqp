@@ -32,6 +32,23 @@ static void daqp_problem_dims(DAQPWorkspace* work, int* n, int* m){
     }
 }
 
+// Whether the threads of a and b search the same problem, so that the search of either is a certificate
+// for the incumbents of both: the settings may only differ in the selection of the nodes and in the
+// limits of the effort, which only end a search early (it is then not a certificate). A new setting that
+// changes the problem or its tolerances must be compared here
+static int daqp_parallel_compatible(DAQPWorkspace* a, DAQPWorkspace* b){
+    const DAQPSettings *s = a->settings, *t = b->settings;
+    return a->n == b->n && a->m == b->m && a->ms == b->ms && a->n_prox == b->n_prox &&
+        DAQP_IS_REDUCED(a) == DAQP_IS_REDUCED(b) &&
+        s->primal_tol == t->primal_tol && s->dual_tol == t->dual_tol && s->zero_tol == t->zero_tol &&
+        s->pivot_tol == t->pivot_tol && s->progress_tol == t->progress_tol &&
+        s->cycle_tol == t->cycle_tol && s->fval_bound == t->fval_bound &&
+        s->eps_prox == t->eps_prox && s->eta_prox == t->eta_prox && s->rho_soft == t->rho_soft &&
+        s->rel_subopt == t->rel_subopt && s->abs_subopt == t->abs_subopt &&
+        s->sing_tol == t->sing_tol && s->refactor_tol == t->refactor_tol && s->w_soft == t->w_soft &&
+        s->eq_reduction == t->eq_reduction && s->presolve == t->presolve;
+}
+
 int daqp_solve_parallel(DAQPResult* res, DAQPWorkspace** works, const int n){
     int i, j, n_x, n_lam, best = -1, ok = 1;
     DAQPThreadData* data;
@@ -43,13 +60,17 @@ int daqp_solve_parallel(DAQPResult* res, DAQPWorkspace** works, const int n){
     DAQPtimer timer;
 #endif
 
-    if(n <= 1 || works[0]->bnb == NULL){
+    if(n <= 0 || works == NULL){
+        res->exitflag = DAQP_EXIT_UNSUPPORTED;
+        return res->exitflag;
+    }
+    if(n == 1 || works[0]->bnb == NULL){
         daqp_solve(res, works[0]);
         return res->exitflag;
     }
     for(i = 0; i < n; i++){
-        if(works[i]->bnb == NULL || works[i]->settings == NULL ||
-                works[i]->n != works[0]->n || works[i]->m != works[0]->m) ok = 0;
+        if(works[i]->bnb == NULL || works[i]->settings == NULL || works[0]->settings == NULL ||
+                !daqp_parallel_compatible(works[i], works[0])) ok = 0;
         for(j = 0; j < i; j++) if(works[i]->settings == works[j]->settings) ok = 0;
     }
     if(!ok){
@@ -143,7 +164,10 @@ cleanup:
 #else // DAQP_PARALLEL
 
 int daqp_solve_parallel(DAQPResult* res, DAQPWorkspace** works, const int n){
-    (void)n;
+    if(n <= 0 || works == NULL){
+        res->exitflag = DAQP_EXIT_UNSUPPORTED;
+        return res->exitflag;
+    }
     daqp_solve(res, works[0]);
     return res->exitflag;
 }

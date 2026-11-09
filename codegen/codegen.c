@@ -59,8 +59,30 @@ void render_daqp_workspace(DAQPWorkspace* work, const char *fname, const char *d
 
     // Write BnB struct
     if(work->bnb != NULL){
-        write_daqp_bnb_h(fh,work->bnb,work->n,prefix);
-        write_daqp_bnb_src(fsrc,work->bnb,work->n,prefix);
+        // The working sets stored in the tree include the soft constraints (as in setup_daqp_bnb)
+        int i, ns = 0, *priority = work->bnb->priority, n_priority = work->bnb->n_priority, *mapped = NULL;
+        for(i = 0; i < work->m; i++) if(work->sense[i] & DAQP_SOFT) ns++;
+        // The priority list holds indices of the original problem, the generated workspace those of
+        // the reduced problem (the constraints dropped by the elimination are left out)
+        if(reduced && n_priority > 0){
+            mapped = malloc(n_priority*sizeof(int));
+            work->bnb->n_priority = 0;
+            for(i = 0; mapped != NULL && i < n_priority; i++){
+                int lo = 0, hi = work->eq->mr-1, mid;
+                while(lo <= hi){
+                    mid = (lo+hi)/2;
+                    if(work->eq->keep[mid] == priority[i]){ mapped[work->bnb->n_priority++] = mid; break; }
+                    if(work->eq->keep[mid] < priority[i]) lo = mid+1;
+                    else hi = mid-1;
+                }
+            }
+            work->bnb->priority = mapped;
+        }
+        write_daqp_bnb_h(fh,work->bnb,work->n+ns,prefix);
+        write_daqp_bnb_src(fsrc,work->bnb,work->n+ns,prefix);
+        work->bnb->priority = priority;
+        work->bnb->n_priority = n_priority;
+        free(mapped);
     }
 
     // Write Hierarchical
@@ -328,6 +350,7 @@ void write_daqp_settings_src(FILE*  f, DAQPSettings* settings, const char* prefi
     fprintf(f, "};\n\n");
 }
 
+// n is the number of variables plus the number of soft constraints (see setup_daqp_bnb)
 void write_daqp_bnb_h(FILE*  f, DAQPBnB* bnb, const int n, const char* prefix){
     fprintf(f, "#define DAQP_BNB\n");
     fprintf(f, "extern int %sbin_ids[%d];\n", prefix, bnb->nb);

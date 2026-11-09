@@ -171,6 +171,70 @@ int main(){
         all_pass &= pass;
     }
 
+    // Settings that change the problem a thread searches (cutoff, equality reduction, regularization)
+    // must agree, since the search of one thread certifies the incumbents of all; limits of the effort
+    // and the branching rule may differ. An empty portfolio is rejected.
+    {
+        c_float H = 1, f = -0.4, bu = 1, bl = 0, x = 0;
+        int sense = DAQP_BINARY;
+        DAQPProblem qp = {1, 1, 1, &H, &f, nullptr, &bu, &bl, &sense, nullptr, 0, 0};
+        auto run = [&](void (*modify)(DAQPSettings*, int)){
+            DAQPSettings st[2];
+            DAQPWorkspace w[2] = {}, *ws[] = {&w[0], &w[1]};
+            for(int i = 0; i < 2; i++){
+                daqp_default_settings(&st[i]);
+                modify(&st[i], i);
+                w[i].settings = &st[i];
+                setup_daqp(&qp, &w[i], nullptr);
+            }
+            DAQPResult r{};
+            r.x = &x;
+            daqp_solve_parallel(&r, ws, 2);
+            for(auto& wi : w) free_work(&wi);
+            return r;
+        };
+        bool pass = run([](DAQPSettings* s, int i){ if(i == 0) s->fval_bound = -0.2; }).exitflag == DAQP_EXIT_UNSUPPORTED &&
+            run([](DAQPSettings* s, int i){ s->eq_reduction = i ? DAQP_EQ_REDUCTION_OFF : DAQP_EQ_REDUCTION_ON; }).exitflag == DAQP_EXIT_UNSUPPORTED &&
+            run([](DAQPSettings* s, int i){ if(i == 1) s->eps_prox = -10; }).exitflag == DAQP_EXIT_UNSUPPORTED;
+        // A common cutoff gives the result of a single solve
+        DAQPResult r = run([](DAQPSettings* s, int i){ s->fval_bound = -0.2; s->branching = i; });
+        pass = pass && r.exitflag == DAQP_EXIT_INFEASIBLE;
+        r = run([](DAQPSettings* s, int i){ s->branching = i; s->time_limit = 1 + i; s->iter_limit = 1000 + i; });
+        pass = pass && r.exitflag == DAQP_EXIT_OPTIMAL && std::fabs(x) < 1e-12;
+        DAQPResult empty{};
+        empty.x = &x;
+        pass = pass && daqp_solve_parallel(&empty, nullptr, 0) == DAQP_EXIT_UNSUPPORTED;
+        std::printf("Incompatible settings and empty portfolio rejected: %s\n", pass ? "PASS" : "FAIL");
+        all_pass &= pass;
+    }
+
+    // A relaxation objective above the default bound DAQP_INF (finite): the parallel solve agrees with
+    // the single solve for each equality-reduction policy
+    {
+        c_float H[] = {1, 0, 0, 1}, f[] = {-0.4, 1e16}, A[] = {0, 1}, bu[] = {1, 1, 0}, bl[] = {0, -1, 0}, x[2];
+        int sense[] = {DAQP_BINARY, 0, DAQP_ACTIVE | DAQP_IMMUTABLE};
+        DAQPProblem qp = {2, 3, 2, H, f, A, bu, bl, sense, nullptr, 0, 0};
+        bool pass = true;
+        for(int eq : {DAQP_EQ_REDUCTION_OFF, DAQP_EQ_REDUCTION_ON}){
+            DAQPSettings st[2];
+            DAQPWorkspace w[2] = {}, *ws[] = {&w[0], &w[1]};
+            for(int i = 0; i < 2; i++){
+                daqp_default_settings(&st[i]);
+                st[i].eq_reduction = eq; st[i].presolve = 0; st[i].branching = i;
+                w[i].settings = &st[i];
+                setup_daqp(&qp, &w[i], nullptr);
+            }
+            DAQPResult single{}, par{};
+            single.x = x; par.x = x;
+            daqp_solve(&single, &w[0]);
+            daqp_solve_parallel(&par, ws, 2);
+            pass = pass && single.exitflag == par.exitflag;
+            for(auto& wi : w) free_work(&wi);
+        }
+        std::printf("Default bound with a large objective offset: %s\n", pass ? "PASS" : "FAIL");
+        all_pass &= pass;
+    }
+
     // Workspaces that share settings are rejected
     {
         Problem p(0);

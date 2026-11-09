@@ -14,7 +14,9 @@ static int daqp_bnb_sync(DAQPWorkspace* work, const c_float c){
     c_float bound;
     if(sh == NULL) return 0;
     if(atomic_load_explicit(&sh->done, memory_order_relaxed)) return 1;
-    bound = atomic_load_explicit(&sh->J_bound, memory_order_relaxed) + c;
+    bound = atomic_load_explicit(&sh->J_bound, memory_order_relaxed);
+    if(bound >= DAQP_INF) return 0; // No incumbent yet
+    bound += c;
     if(bound < work->settings->fval_bound) work->settings->fval_bound = bound;
     return 0;
 }
@@ -271,13 +273,11 @@ int daqp_bnb_lb(DAQPWorkspace* work, const c_float lb){
         daqp_bnb_load_ws(work->bnb->root_WS,work->bnb->n_root_WS,work);
 
     // Objective J = 0.5*fval - c, with c = 0.5*||v||^2 - fp, where fp is the objective
-    // removed by equality elimination (only needed for rel_subopt, fval_bound and lb)
+    // removed by equality elimination. The bound fval_bound is on J, also the default DAQP_INF
+    // (finite): without the shift by c, the nodes of a problem with a large ||v|| would be pruned
     c_float fval_bound0 = work->settings->fval_bound, fval_best = 0, c = 0;
-    if(work->settings->rel_subopt > 0 || fval_bound0 < DAQP_INF || lb > -DAQP_INF ||
-            work->bnb->shared != NULL){
-        if(work->v != NULL) for(int i=0; i < work->n; i++) c += 0.5*work->v[i]*work->v[i];
-        if(work->eq != NULL && work->eq->installed) c -= work->eq->fp;
-    }
+    if(work->v != NULL) for(int i=0; i < work->n; i++) c += 0.5*work->v[i]*work->v[i];
+    if(work->eq != NULL && work->eq->installed) c -= work->eq->fp;
     work->settings->fval_bound = fval_bound0 + c;
 
     // Start from a user-provided integer-feasible solution
@@ -441,6 +441,22 @@ static int daqp_branch_on(const int id, const c_float diff, c_float dist, const 
     return diff < 0 ? id : DAQP_ADD_LOWER_FLAG(id);
 }
 
+// The index in the problem in the workspace of the constraint id of the original problem (priority lists
+// hold original indices), or -1 if an equality elimination has dropped it or it is out of range. The
+// constraints that an elimination keeps are in ascending order of their original index (eq->keep)
+static int daqp_bnb_priority_id(const int id, DAQPWorkspace* work){
+    int lo = 0, hi, mid;
+    if(work->eq == NULL || !work->eq->installed) return id < work->m ? id : -1;
+    hi = work->eq->mr - 1;
+    while(lo <= hi){
+        mid = (lo+hi)/2;
+        if(work->eq->keep[mid] == id) return mid;
+        if(work->eq->keep[mid] < id) lo = mid+1;
+        else hi = mid-1;
+    }
+    return -1;
+}
+
 // The binary constraint to branch over (DAQPSettings.branching), with the lower flag if the lower bound is
 // explored first, or DAQP_EMPTY_IND if the relaxation satisfies all binary constraints
 int daqp_get_branch_id(DAQPWorkspace* work){
@@ -451,7 +467,8 @@ int daqp_get_branch_id(DAQPWorkspace* work){
 
     if(rule == DAQP_BRANCHING_PRIORITY){
         for(k = 0; k < work->bnb->n_priority; k++){
-            id = work->bnb->priority[k];
+            id = daqp_bnb_priority_id(work->bnb->priority[k],work);
+            if(id < 0) continue;
             if(daqp_branch_candidate(id,node,work,&diff,&dist,&tol))
                 return daqp_branch_on(id,diff,dist,tol,node,work);
         }
