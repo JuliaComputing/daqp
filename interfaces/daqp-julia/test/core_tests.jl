@@ -494,6 +494,12 @@ end
     H, f, A, bu, bl, sense = generate_test_MIQP(n, m, ms, nb)
     bu[ms+1], bl[ms+1] = 1.5, 1.2
     @test DyadDAQP.solve_parallel(models(H, f, A, bu, bl, sense))[3] == DyadDAQP.INFEASIBLE
+    # The relaxation objective exceeds the default bound (a soft constraint with a large slack), which
+    # the single solve reports as infeasible at the root; the parallel solve must not shift that bound
+    Hs, fs, As = Matrix(1.0I, 2, 2), [1e18, 1e18], [1.0 1.0]
+    bus, bls, senses = [1.0, 1e3, 1e30], [0.0, -1e3, 1e10], Cint[DyadDAQP.BINARY, 0, DyadDAQP.SOFT]
+    @test DyadDAQP.solve(models(Hs, fs, As, bus, bls, senses; rules = 0:0)[1])[3] == DyadDAQP.INFEASIBLE
+    @test DyadDAQP.solve_parallel(models(Hs, fs, As, bus, bls, senses))[3] == DyadDAQP.INFEASIBLE
     # Models of different dimensions are rejected
     H2, f2, A2, bu2, bl2, sense2 = generate_test_MIQP(n + 1, m + 1, ms + 1, nb)
     ds = [models(H, f, A, bu, bl, sense; rules = 0:0); models(H2, f2, A2, bu2, bl2, sense2; rules = 1:1)]

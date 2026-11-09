@@ -14,7 +14,9 @@ static int daqp_bnb_sync(DAQPWorkspace* work, const c_float c){
     c_float bound;
     if(sh == NULL) return 0;
     if(atomic_load_explicit(&sh->done, memory_order_relaxed)) return 1;
-    bound = atomic_load_explicit(&sh->J_bound, memory_order_relaxed) + c;
+    bound = atomic_load_explicit(&sh->J_bound, memory_order_relaxed);
+    if(bound >= DAQP_INF) return 0; // No incumbent yet
+    bound += c;
     if(bound < work->settings->fval_bound) work->settings->fval_bound = bound;
     return 0;
 }
@@ -246,12 +248,14 @@ int daqp_bnb_lb(DAQPWorkspace* work, const c_float lb){
     // Objective J = 0.5*fval - c, with c = 0.5*||v||^2 - fp, where fp is the objective
     // removed by equality elimination (only needed for rel_subopt, fval_bound and lb)
     c_float fval_bound0 = work->settings->fval_bound, fval_best = 0, c = 0;
-    if(work->settings->rel_subopt > 0 || fval_bound0 < DAQP_INF || lb > -DAQP_INF ||
-            work->bnb->shared != NULL){
+    const int use_c = work->settings->rel_subopt > 0 || fval_bound0 < DAQP_INF || lb > -DAQP_INF;
+    if(use_c || work->bnb->shared != NULL){
         if(work->v != NULL) for(int i=0; i < work->n; i++) c += 0.5*work->v[i]*work->v[i];
         if(work->eq != NULL && work->eq->installed) c -= work->eq->fp;
     }
-    work->settings->fval_bound = fval_bound0 + c;
+    // A parallel solve only needs c to share the bound (see daqp_bnb_sync): the default bound
+    // DAQP_INF is finite and would otherwise be shifted by c, which changes which nodes are pruned
+    work->settings->fval_bound = fval_bound0 + (use_c ? c : 0);
 
     // Start from a user-provided integer-feasible solution
     if(work->state & DAQP_STATE_INCUMBENT){
