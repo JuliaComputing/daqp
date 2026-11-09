@@ -512,6 +512,19 @@ end
         @test isapprox(fval, fref; rtol = 1e-9, atol = 1e-9)
         @test all(xi -> min(abs(xi), abs(xi - 1)) < 1e-8, x[1:nb])
     end
+    # A large linear term makes the internal objective exceed the default bound DAQP_INF (finite) while
+    # the objective J (with a soft constraint with a large slack) does not: the single and the parallel
+    # solve agree
+    Hs, fs, As = Matrix(1.0I, 2, 2), [1e18, 1e18], [1.0 1.0]
+    bus, bls, senses = [1.0, 1e3, 1e30], [0.0, -1e3, 1e10], Cint[DyadDAQP.BINARY, 0, DyadDAQP.SOFT]
+    xs, fvs, es = DyadDAQP.solve(models(Hs, fs, As, bus, bls, senses; rules = 0:0)[1])
+    xp, fvp, ep = DyadDAQP.solve_parallel(models(Hs, fs, As, bus, bls, senses))
+    @test es > 0 && ep == es
+    @test isapprox(fvp, fvs; rtol = 1e-9) && isapprox(xp, xs; rtol = 1e-9)
+    # Models whose settings change the problem (here the cutoff fval_bound) are rejected
+    ds = models(H, f, A, bu, bl, sense; rules = 0:1)
+    DyadDAQP.settings(ds[1], Dict{Symbol,Any}(:fval_bound => 0.0))
+    @test_throws ArgumentError DyadDAQP.solve_parallel(ds)
     # Models of different dimensions are rejected
     H2, f2, A2, bu2, bl2, sense2 = generate_test_MIQP(n + 1, m + 1, ms + 1, nb)
     ds = [models(H, f, A, bu, bl, sense; rules = 0:0); models(H2, f2, A2, bu2, bl2, sense2; rules = 1:1)]

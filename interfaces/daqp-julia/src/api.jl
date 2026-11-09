@@ -571,7 +571,8 @@ end
     x, fval, exitflag, info = solve_parallel(models::AbstractVector{Model})
 
 Solve a mixed-integer problem with parallel branch and bound. Each model holds the same problem, set up
-separately, and may have other settings, e.g., another `branching` rule. Each model is solved by an
+separately. The settings may only differ in `branching`, `time_limit` and `iter_limit`, since the search of
+one thread certifies the solutions of all threads only if they search the same problem. Each model is solved by an
 operating-system thread of its own (not a Julia thread). The threads share the objective of the best
 integer-feasible solution found by any of them, which bounds the nodes of all of them, and the solve ends
 when the first thread has explored its tree, which proves that the best solution is optimal.
@@ -579,7 +580,7 @@ when the first thread has explored its tree, which proves that the best solution
 `info.iterations` and `info.nodes` are the totals of all threads and `info.solve_time` is the elapsed
 time. The solution is also stored in the first model. If the library is built without parallel support,
 or the problem has no binary constraints, only the first model is solved. Throws an `ArgumentError` if the
-models do not hold problems of the same dimensions.
+models differ in their dimensions, state (equality reduction, regularization) or other settings.
 
 The call does not return to the Julia runtime until all threads have finished, so a garbage collection
 requested by another Julia thread waits for it.
@@ -600,7 +601,7 @@ function solve_parallel(ds::AbstractVector{DyadDAQP.Model})
     foreach(m -> m.has_solved = true, ds)
     result = result_ptr[]
     result.exitflag == UNSUPPORTED &&
-        throw(ArgumentError("solve_parallel: the models must hold problems of the same dimensions with settings of their own"))
+        throw(ArgumentError("solve_parallel: the models must hold problems of the same dimensions and state, with settings that only differ in branching, time_limit and iter_limit"))
     info = (x = d.x, λ = d.λ, fval = result.fval,
             exitflag = result.exitflag,
             status = DyadDAQP.flag2status[result.exitflag],
