@@ -350,8 +350,11 @@ int daqp_bnb_setup_pool(DAQPWorkspace* work){
         pool->ws_len = ws_len;
         pool->grow = daqp_bnb_grow_pool;
         work->bnb->pool = pool;
-        // Enlarged on demand by the search (see daqp_pool_store in bnb.c)
-        if(!daqp_bnb_resize_pool(pool, max_cap < DAQP_NODE_POOL_INIT ? max_cap : DAQP_NODE_POOL_INIT)){
+        // Enlarged on demand by the search (see daqp_pool_store in bnb.c). The initial room is at
+        // least that of a depth-first search (path_len), so that the search can fall back to it if
+        // the pool cannot be enlarged; otherwise depth first is used (the pool is freed)
+        const int init = max_cap < DAQP_NODE_POOL_INIT ? max_cap : DAQP_NODE_POOL_INIT;
+        if(!daqp_bnb_resize_pool(pool, init > path_len ? init : path_len)){
             daqp_bnb_free_pool(work);
             return -1;
         }

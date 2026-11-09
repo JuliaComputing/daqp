@@ -306,7 +306,8 @@ int daqp_bnb_lb(DAQPWorkspace* work, const c_float lb){
 
     exitflag = DAQP_EXIT_INFEASIBLE;
     int explored = 1; // The tree is explored (not stopped early)
-    if(work->settings->node_selection == DAQP_NODE_BEST_FIRST_DIVE && work->bnb->pool != NULL)
+    if(work->settings->node_selection == DAQP_NODE_BEST_FIRST_DIVE && work->bnb->pool != NULL &&
+            work->bnb->pool->cap >= work->bnb->nb+1) // Room for the fallback to depth first
         exitflag = daqp_bnb_best_first(work,c,lb,&fval_best,&swp_ptr,&explored);
     else while( work->bnb->n_nodes > 0 ){ // Depth-first tree exploration
         // Bound from the incumbents of other threads (see daqp_solve_parallel)

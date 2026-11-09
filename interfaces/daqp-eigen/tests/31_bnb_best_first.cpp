@@ -135,6 +135,8 @@ bool report(const char* name, bool pass){
     return pass;
 }
 
+int fail_growth(DAQPNodePool*){ return 0; }
+
 } // namespace
 
 int main(){
@@ -244,6 +246,43 @@ int main(){
             pass = pass && solve(pi, all).exitflag == DAQP_EXIT_INFEASIBLE;
         }
         std::printf("Parallel portfolio, eq_reduction = %2d: %s\n", eq_reduction, pass ? "PASS" : "FAIL");
+        all_pass &= pass;
+    }
+    // The pool cannot be enlarged (allocation failure, simulated through grow) for more binary constraints
+    // than the initial room: the search falls back to depth first and finds the optimum
+    {
+        constexpr int NV = 65;
+        std::vector<c_float> H(NV*NV, 0), f(NV, -0.49), bu(NV, 1), bl(NV, 0), x(NV);
+        std::vector<int> sense(NV, DAQP_BINARY);
+        for(int i = 0; i < NV; i++) H[i*NV+i] = 1;
+        DAQPProblem qp = {NV, NV, NV, H.data(), f.data(), nullptr, bu.data(), bl.data(), sense.data(), nullptr, 0, 0};
+        bool pass = true;
+        for(int pool_size : {NV+1, 16384}){
+            DAQPSettings st;
+            daqp_default_settings(&st);
+            st.node_selection = DAQP_NODE_BEST_FIRST_DIVE;
+            st.node_pool_size = pool_size;
+            st.presolve = 0;
+            st.abs_subopt = 100;
+            DAQPWorkspace w{};
+            w.settings = &st;
+            setup_daqp(&qp, &w, nullptr);
+            pass = pass && daqp_bnb_setup_pool(&w) == 1 && w.bnb->pool->cap >= NV+1;
+            w.bnb->pool->grow = fail_growth;
+            DAQPResult res{};
+            res.x = x.data();
+            daqp_solve(&res, &w);
+            const int flag_bf = res.exitflag;
+            const c_float f_bf = res.fval;
+            st.node_selection = DAQP_NODE_DEPTH_FIRST;
+            daqp_solve(&res, &w);
+            pass = pass && flag_bf == DAQP_EXIT_OPTIMAL && res.exitflag == DAQP_EXIT_OPTIMAL &&
+                std::fabs(f_bf - res.fval) <= 1e-9*(1 + std::fabs(res.fval));
+            w.settings = nullptr;
+            free_daqp_workspace(&w);
+            free_daqp_ldp(&w);
+        }
+        std::printf("Pool that cannot be enlarged: %s\n", pass ? "PASS" : "FAIL");
         all_pass &= pass;
     }
     return all_pass ? 0 : 1;
