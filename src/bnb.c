@@ -8,13 +8,15 @@
 
 // The bound fval_bound (in the scale 0.5*fval = J + c, see daqp_bnb_bound) is shared between the
 // threads of daqp_solve_parallel as the bound fval_bound - c on J, which does not depend on c.
-// Returns 1 if another thread has explored its tree (the search is stopped)
+// Returns 1 if the search is stopped (another thread of the group has explored its tree, or a
+// group cannot be completed)
 static int daqp_bnb_sync(DAQPWorkspace* work, const c_float c){
     DAQPBnBShared* sh = (DAQPBnBShared*)work->bnb->shared;
     c_float bound;
     if(sh == NULL) return 0;
-    if(atomic_load_explicit(&sh->done, memory_order_relaxed)) return 1;
-    bound = atomic_load_explicit(&sh->J_bound, memory_order_relaxed);
+    if(atomic_load_explicit(&sh->done, memory_order_relaxed) ||
+            atomic_load_explicit(sh->stop, memory_order_relaxed)) return 1;
+    bound = atomic_load_explicit(sh->J_bound, memory_order_relaxed);
     if(bound >= DAQP_INF) return 0; // No incumbent yet
     bound += c;
     if(bound < work->settings->fval_bound) work->settings->fval_bound = bound;
@@ -27,11 +29,11 @@ static void daqp_bnb_publish(DAQPWorkspace* work, const c_float c){
     c_float J, cur;
     if(sh == NULL) return;
     J = work->settings->fval_bound - c;
-    cur = atomic_load_explicit(&sh->J_bound, memory_order_relaxed);
-    while(J < cur && !atomic_compare_exchange_weak(&sh->J_bound, &cur, J));
+    cur = atomic_load_explicit(sh->J_bound, memory_order_relaxed);
+    while(J < cur && !atomic_compare_exchange_weak(sh->J_bound, &cur, J));
 }
 
-// The tree of work has been explored: stop the other threads
+// The tree of work has been explored: complete its group (stop the other threads of the group)
 static void daqp_bnb_finish(DAQPWorkspace* work){
     DAQPBnBShared* sh = (DAQPBnBShared*)work->bnb->shared;
     DAQPWorkspace* none = NULL;
@@ -281,7 +283,7 @@ int daqp_bnb_lb(DAQPWorkspace* work, const c_float lb){
     int explored = 1; // The tree is explored (not stopped early)
     // Start tree exploration
     while( work->bnb->n_nodes > 0 ){
-        // Bound from the incumbents of other threads (see daqp_solve_parallel)
+        // Bound from the incumbents of other threads (see daqp_solve_parallel_groups)
         if(daqp_bnb_sync(work,c)){
             explored = 0;
             exitflag = DAQP_EXIT_TIMELIMIT;

@@ -513,6 +513,72 @@ end
     @test_throws ArgumentError DyadDAQP.solve_parallel(ds)
 end
 
+@testset "Parallel BnB with groups" begin
+    # A split on one or two binaries (one group per combination of their values, fixed by the bounds)
+    # gives the optimum of the single solve, with one or several branching rules per group
+    Random.seed!(1357)
+    n, m, ms, nb = 20, 25, 20, 14
+    opts(rule, eq) = Dict{Symbol,Any}(:branching => Cint(rule), :abs_subopt => 0.0, :rel_subopt => 0.0,
+                                      :eq_reduction => Cint(eq))
+    function split_models(H, f, A, bu, bl, sense, vars; rules = 0:0, eq = -1)
+        ds, groups = DyadDAQP.Model[], Int[]
+        for (g, values) in enumerate(Iterators.product(ntuple(_ -> 0:1, length(vars))...))
+            bug, blg = copy(bu), copy(bl)
+            bug[vars] .= values; blg[vars] .= values
+            for rule in rules
+                d = DyadDAQP.Model()
+                DyadDAQP.settings(d, opts(rule, eq))
+                DyadDAQP.setup(d, H, f, A, bug, blg, sense)
+                push!(ds, d); push!(groups, g)
+            end
+        end
+        return ds, groups
+    end
+    function single(H, f, A, bu, bl, sense; eq = -1)
+        d = DyadDAQP.Model()
+        DyadDAQP.settings(d, opts(0, eq))
+        DyadDAQP.setup(d, H, f, A, bu, bl, sense)
+        return DyadDAQP.solve(d)
+    end
+    for trial in 1:8, eq in (-1, 1)
+        H, f, A, bu, bl, sense = generate_test_MIQP(n, m, ms, nb)
+        # An equality constraint (on the continuous variables) for the equality reduction
+        bu[ms+2] = bl[ms+2] = 0.5
+        _, fref, eref = single(H, f, A, bu, bl, sense; eq)
+        @test eref == DyadDAQP.OPTIMAL
+        for vars in ([1], [nb], [1, 2], [3, nb - 1]), rules in (0:0, 0:2)
+            ds, groups = split_models(H, f, A, bu, bl, sense, vars; rules, eq)
+            x, fval, exitflag, info = DyadDAQP.solve_parallel(ds; groups)
+            @test exitflag == DyadDAQP.OPTIMAL
+            @test isapprox(fval, fref; rtol = 1e-9, atol = 1e-9)
+            @test all(xi -> min(abs(xi), abs(xi - 1)) < 1e-8, x[1:nb])
+        end
+    end
+    # An infeasible group (at most one binary is one) and an infeasible problem (the sum of the binaries
+    # in (1, 2))
+    H, f, A, bu, bl, sense = generate_test_MIQP(n, m, ms, nb)
+    bu[ms+1] = 1.0
+    _, fref, eref = single(H, f, A, bu, bl, sense)
+    ds, groups = split_models(H, f, A, bu, bl, sense, [1, 2]; rules = 0:1)
+    x, fval, exitflag, _ = DyadDAQP.solve_parallel(ds; groups)
+    @test eref == exitflag == DyadDAQP.OPTIMAL && isapprox(fval, fref; rtol = 1e-9, atol = 1e-9)
+    bu[ms+1], bl[ms+1] = 1.5, 1.2
+    ds, groups = split_models(H, f, A, bu, bl, sense, [1, 2])
+    @test DyadDAQP.solve_parallel(ds; groups)[3] == DyadDAQP.INFEASIBLE
+    # Rejected: groups with different linear terms, a group without a model, a wrong number of entries
+    H, f, A, bu, bl, sense = generate_test_MIQP(n, m, ms, nb)
+    ds, groups = split_models(H, f, A, bu, bl, sense, [1])
+    d = DyadDAQP.Model()
+    DyadDAQP.settings(d, opts(0, -1))
+    DyadDAQP.setup(d, H, f .+ 1, A, bu, bl, sense)
+    @test_throws ArgumentError DyadDAQP.solve_parallel([ds[1], d]; groups = [1, 2])
+    @test_throws ArgumentError DyadDAQP.solve_parallel(ds; groups = [1, 3])
+    @test_throws ArgumentError DyadDAQP.solve_parallel(ds; groups = [1])
+    # A single group is the portfolio
+    ds, _ = split_models(H, f, A, bu, bl, sense, Int[]; rules = 0:2)
+    @test DyadDAQP.solve_parallel(ds; groups = [1, 1, 1])[3] == DyadDAQP.OPTIMAL
+end
+
 @testset "BnB branching rules" begin
     # All rules find the optimal solution (abs_subopt = 0); a priority list in reverse order of the
     # binary constraints branches as the rule last

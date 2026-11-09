@@ -568,7 +568,7 @@ function set_branch_priority(d::DyadDAQP.Model, ids::AbstractVector{<:Integer})
 end
 
 """
-    x, fval, exitflag, info = solve_parallel(models::AbstractVector{Model})
+    x, fval, exitflag, info = solve_parallel(models::AbstractVector{Model}; groups = nothing)
 
 Solve a mixed-integer problem with parallel branch and bound. Each model holds the same problem, set up
 separately. The settings may only differ in `branching`, `time_limit` and `iter_limit`, since the search of
@@ -577,31 +577,54 @@ operating-system thread of its own (not a Julia thread). The threads share the o
 integer-feasible solution found by any of them, which bounds the nodes of all of them, and the solve ends
 when the first thread has explored its tree, which proves that the best solution is optimal.
 
+`groups` (a vector of the length of `models` with the group `1, 2, ...` of each model, each group
+non-empty) splits the search: the models of a group hold the same problem (as above), and the problems of
+different groups are restrictions of one problem P that only differ in the bounds, e.g., one group for each
+combination of the values of some binary variables. They must have the same dimensions, `H`, `f`, `A`,
+soft and binary constraints and settings (except `branching`, `time_limit` and `iter_limit`), and the
+union of their feasible sets must be the feasible set of P (only the former is checked). The bound from the
+best solution is shared by all groups. A group is complete when one of its threads has explored its tree,
+and the solution is optimal for P when all groups are complete. If all threads of a group stop at a
+limit, all threads stop and the best solution is returned with the exit flag `FEASIBLE`. With a singular
+Hessian, the bound is only shared within each group (see `bnb_parallel.h`).
+
 `info.iterations` and `info.nodes` are the totals of all threads and `info.solve_time` is the elapsed
 time. The solution is also stored in the first model. If the library is built without parallel support,
-or the problem has no binary constraints, only the first model is solved. Throws an `ArgumentError` if the
-models differ in their dimensions, state (equality reduction, regularization) or other settings.
+or the problem has no binary constraints, only the first model is solved (an `ArgumentError` is thrown if
+there is more than one group). Throws an `ArgumentError` if the models differ in their dimensions, state
+(equality reduction, regularization) or other settings, or if the groups are not restrictions of one problem.
 
 The call does not return to the Julia runtime until all threads have finished, so a garbage collection
 requested by another Julia thread waits for it.
 """
-function solve_parallel(ds::AbstractVector{DyadDAQP.Model})
+function solve_parallel(ds::AbstractVector{DyadDAQP.Model}; groups::Union{Nothing,AbstractVector{<:Integer}} = nothing)
     isempty(ds) && throw(ArgumentError("solve_parallel: no models"))
     all(d -> d.has_model, ds) || throw(ArgumentError("solve_parallel: every model must be set up"))
-    Libc.Libdl.dlsym_e(Libc.Libdl.dlopen(DyadDAQP.libdaqp), :daqp_solve_parallel) == C_NULL &&
-        error("solve_parallel: the loaded libdaqp does not provide daqp_solve_parallel")
+    groups === nothing || length(groups) == length(ds) ||
+        throw(ArgumentError("solve_parallel: groups must have one entry per model"))
+    lib = Libc.Libdl.dlopen(DyadDAQP.libdaqp)
+    sym = groups === nothing ? :daqp_solve_parallel : :daqp_solve_parallel_groups
+    Libc.Libdl.dlsym_e(lib, sym) == C_NULL &&
+        error("solve_parallel: the loaded libdaqp does not provide $sym")
     d = first(ds)
     works = Ptr{DyadDAQP.Workspace}[m.work for m in ds]
     result_ptr = Ref(DAQPResult(d.x, d.λ))
     GC.@preserve ds begin
-        ccall((:daqp_solve_parallel, DyadDAQP.libdaqp), Cint,
-              (Ref{DyadDAQP.DAQPResult}, Ptr{Ptr{DyadDAQP.Workspace}}, Cint),
-              result_ptr, works, length(works))
+        if groups === nothing
+            ccall((:daqp_solve_parallel, DyadDAQP.libdaqp), Cint,
+                  (Ref{DyadDAQP.DAQPResult}, Ptr{Ptr{DyadDAQP.Workspace}}, Cint),
+                  result_ptr, works, length(works))
+        else
+            cgroups = Cint[g - 1 for g in groups]
+            ccall((:daqp_solve_parallel_groups, DyadDAQP.libdaqp), Cint,
+                  (Ref{DyadDAQP.DAQPResult}, Ptr{Ptr{DyadDAQP.Workspace}}, Ptr{Cint}, Cint),
+                  result_ptr, works, cgroups, length(works))
+        end
     end
     foreach(m -> m.has_solved = true, ds)
     result = result_ptr[]
     result.exitflag == UNSUPPORTED &&
-        throw(ArgumentError("solve_parallel: the models must hold problems of the same dimensions and state, with settings that only differ in branching, time_limit and iter_limit"))
+        throw(ArgumentError("solve_parallel: the models must hold problems of the same dimensions and state, with settings that only differ in branching, time_limit and iter_limit; the groups must be numbered 1, 2, ... and hold restrictions of one problem"))
     info = (x = d.x, λ = d.λ, fval = result.fval,
             exitflag = result.exitflag,
             status = DyadDAQP.flag2status[result.exitflag],

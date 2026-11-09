@@ -29,6 +29,8 @@ typedef struct{
 void daqp_solve(DAQPResult* res, DAQPWorkspace *work);
 // Parallel branch and bound with a portfolio of workspaces (see bnb_parallel.h)
 int daqp_solve_parallel(DAQPResult* res, DAQPWorkspace** works, const int n);
+// The same with the workspaces split into groups that search restrictions of one problem (see bnb_parallel.h)
+int daqp_solve_parallel_groups(DAQPResult* res, DAQPWorkspace** works, const int* groups, const int n);
 void daqp_quadprog(DAQPResult* res, DAQPProblem* qp,DAQPSettings* settings);
 void daqp_avi(DAQPResult *res, DAQPProblem* problem, DAQPSettings *settings);
 
