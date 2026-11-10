@@ -30,13 +30,38 @@ if(NOT SOFT_WEIGHTS)
 endif()
 
 option (PARALLEL "Parallel branch and bound (daqp_solve_parallel), requires threads and C11 atomics" ON)
+set(DAQP_LIBATOMIC OFF)
 if(PARALLEL)
   find_package(Threads)
-  if(Threads_FOUND)
-    add_compile_definitions(DAQP_PARALLEL)
-  else()
+  # The atomic operations of the parallel solve. On some 32-bit targets (e.g., ARMv6, ARMv7 and i686
+  # with some compilers), the operations on 8-byte types are calls into libatomic, which is then linked
+  include(CheckCSourceCompiles)
+  set(DAQP_ATOMICS_SOURCE "
+#include <stdatomic.h>
+_Atomic double d; atomic_int i; atomic_ulong u; _Atomic(void*) p;
+int main(void){
+  double e = 0; void* q = 0;
+  atomic_store(&d, 1.0);
+  atomic_compare_exchange_weak(&d, &e, 2.0);
+  atomic_compare_exchange_strong(&p, &q, &e);
+  atomic_fetch_add(&i, 1); atomic_fetch_add(&u, 1);
+  return (int)atomic_load_explicit(&d, memory_order_relaxed) + atomic_load(&i) + (int)atomic_load(&u);
+}")
+  check_c_source_compiles("${DAQP_ATOMICS_SOURCE}" DAQP_HAS_ATOMICS)
+  if(NOT DAQP_HAS_ATOMICS)
+    set(CMAKE_REQUIRED_LIBRARIES atomic)
+    check_c_source_compiles("${DAQP_ATOMICS_SOURCE}" DAQP_HAS_ATOMICS_LIBATOMIC)
+    unset(CMAKE_REQUIRED_LIBRARIES)
+    set(DAQP_LIBATOMIC ${DAQP_HAS_ATOMICS_LIBATOMIC})
+  endif()
+  if(NOT Threads_FOUND)
     message(WARNING "PARALLEL requested but no thread library was found: daqp_solve_parallel solves sequentially")
     set(PARALLEL OFF)
+  elseif(NOT DAQP_HAS_ATOMICS AND NOT DAQP_LIBATOMIC)
+    message(WARNING "PARALLEL requested but the compiler provides no C11 atomics (stdatomic.h), also not with libatomic: daqp_solve_parallel solves sequentially")
+    set(PARALLEL OFF)
+  else()
+    add_compile_definitions(DAQP_PARALLEL)
   endif()
 endif()
 
@@ -105,6 +130,10 @@ target_link_libraries(daqpstat daqp)
 if(PARALLEL)
   target_link_libraries(daqp Threads::Threads)
   target_link_libraries(daqpstat Threads::Threads)
+  if(DAQP_LIBATOMIC)
+    target_link_libraries(daqp atomic)
+    target_link_libraries(daqpstat atomic)
+  endif()
 endif()
 
 # Install

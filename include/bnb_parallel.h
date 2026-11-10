@@ -21,12 +21,40 @@ extern "C" {
  * and the search ends when the first thread has explored its tree, which proves that the best
  * incumbent is optimal (within abs_subopt and rel_subopt). The other threads are then stopped.
  *
- * The solution in res is that of the best incumbent. res->iter and res->nodes are the totals of all
- * threads, and res->solve_time is the elapsed (wall-clock) time. Returns the exit flag (also in
- * res->exitflag): DAQP_EXIT_UNSUPPORTED if n < 1, or if the workspaces share settings, differ in
- * their dimensions or state (equality reduction, regularization), or differ in other settings. Without DAQP_PARALLEL, or if the problem has no binary constraints, the first workspace
- * is solved with daqp_solve. Declared in api.h:
+ * Reusable solver (declared in api.h):
+ *   DAQPParallel* daqp_parallel_setup(DAQPWorkspace** works, const int n);
+ *   int daqp_parallel_solve(DAQPParallel* par, DAQPResult* res);
+ *   void daqp_parallel_free(DAQPParallel* par);
+ * daqp_parallel_setup checks the workspaces, allocates the results of the threads and starts n-1
+ * worker threads, which wait on a condition variable between the solves; the calling thread of
+ * daqp_parallel_solve solves the first workspace. It returns NULL if n < 1, if the workspaces are
+ * incompatible (see below) or if an allocation fails. DAQPParallel is opaque; it is allocated by the
+ * library so that its layout (threads, synchronization) is not part of the interface.
+ *
+ * Between the solves, the workspaces may be updated (daqp_update, settings), also in their
+ * dimensions. The compatibility checks are repeated by every solve, at a cost of O(n^2) comparisons
+ * of pointers and O(n) comparisons of settings and dimensions (the problem data is not compared). The
+ * workspaces must remain allocated until daqp_parallel_free, which does not access them. A
+ * DAQPParallel must not be solved by two threads at the same time.
+ *
+ * daqp_parallel_solve: the solution in res is that of the best incumbent. res->iter and res->nodes are
+ * the totals of all threads, and res->solve_time is the elapsed (wall-clock) time. Returns the exit
+ * flag (also in res->exitflag): DAQP_EXIT_UNSUPPORTED if the workspaces share settings, differ in their
+ * dimensions or state (equality reduction, regularization), or differ in other settings, or if an
+ * allocation fails. If the problem has no binary constraints, the first workspace is solved with
+ * daqp_solve. Without DAQP_PARALLEL (no threads or no C11 atomics, see CMakeLists.txt), the workspaces
+ * are checked in the same way and the first one is solved with daqp_solve.
+ *
+ * Polling (off by default):
+ *   void daqp_parallel_set_spin(DAQPParallel* par, const int spin);
+ * Between the solves, each worker thread polls for the start of the next solve spin times before it
+ * waits on the condition variable, and the calling thread polls for the end of the solve as often
+ * before it waits. This reduces the latency of the start and of the end of a solve at the cost of
+ * processor time while the threads poll. Without DAQP_PARALLEL it has no effect.
+ *
+ * One-shot solve (setup, solve and free, declared in api.h):
  *   int daqp_solve_parallel(DAQPResult* res, DAQPWorkspace** works, const int n);
+ * Returns DAQP_EXIT_UNSUPPORTED also if n < 1.
  */
 
 #if defined(DAQP_PARALLEL) && !defined(__cplusplus)

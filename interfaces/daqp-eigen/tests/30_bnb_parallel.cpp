@@ -1,4 +1,5 @@
 #include "api.h"
+#include "utils.h"
 
 #include <algorithm>
 #include <chrono>
@@ -8,7 +9,11 @@
 
 // Parallel branch and bound (daqp_solve_parallel) with a portfolio of branching rules: the result is the
 // optimal solution that every rule finds on its own, also with equality reduction, for an infeasible
-// problem and for a singular Hessian. Workspaces that share settings are rejected.
+// problem and for a singular Hessian. Workspaces that share settings are rejected. The reusable solver
+// (daqp_parallel_setup) gives the same results over repeated solves with updates of the workspaces,
+// rejects incompatible workspaces at the setup and at a solve, and can be freed without a solve. The
+// overhead of a solve with the persistent worker threads is compared with the one-shot solve, which
+// creates the threads in every call.
 
 namespace {
 
@@ -100,6 +105,34 @@ bool integer(const Solution& s){
 bool same(const Solution& a, const Solution& b, c_float tol = 1e-9){
     return a.exitflag == b.exitflag && integer(a) && std::fabs(a.fval - b.fval) <= tol*(1 + std::fabs(b.fval));
 }
+
+// Small problem of the structure of Problem (n variables, the first nb binary), solved in a fraction
+// of a millisecond, for the measurement of the overhead of a parallel solve
+struct SmallProblem {
+    int n, nb, m;
+    std::vector<c_float> H, f, A, bu, bl;
+    std::vector<int> sense;
+    DAQPProblem qp{};
+    SmallProblem(int n_, int nb_, unsigned seed) : n(n_), nb(nb_), m(n_ + 1),
+        H(n_*n_), f(n_), A(n_), bu(n_ + 1), bl(n_ + 1), sense(n_ + 1) {
+        unsigned s = seed*2654435761u + 12345u;
+        auto rnd = [&s]() { s = s*1664525u + 1013904223u; return (s >> 8)*(1.0/16777216.0); };
+        std::vector<c_float> t(n);
+        for(int i = 0; i < n; i++) t[i] = i < nb ? 0.2 + 0.6*rnd() : 0.1;
+        for(int i = 0; i < n; i++)
+            for(int j = 0; j < n; j++) H[i*n+j] = (i == j)*(1 + rnd()) + 0.2;
+        for(int i = 0; i < n; i++){
+            f[i] = 0;
+            for(int j = 0; j < n; j++) f[i] -= H[i*n+j]*t[j];
+            A[i] = i < nb;
+            bu[i] = i < nb ? 1 : 2;
+            bl[i] = i < nb ? 0 : -2;
+            sense[i] = i < nb ? DAQP_BINARY : 0;
+        }
+        bu[n] = 0.4*nb; bl[n] = -DAQP_INF; sense[n] = 0;
+        qp = {n, m, n, H.data(), f.data(), A.data(), bu.data(), bl.data(), sense.data(), nullptr, 0, 0};
+    }
+};
 
 std::vector<DAQPSettings> portfolio(int eq_reduction){
     std::vector<DAQPSettings> settings(3);
@@ -243,6 +276,169 @@ int main(){
         const bool pass = par.exitflag == DAQP_EXIT_UNSUPPORTED;
         std::printf("Shared settings rejected: %s\n", pass ? "PASS" : "FAIL");
         all_pass &= pass;
+    }
+
+    // Reusable solver: repeated solves with updates of f, of the bounds and of H give the solutions of
+    // single solves of fresh workspaces. A setting that makes the workspaces incompatible between two
+    // solves is rejected by the solve, and the solver is usable again once it is restored
+    for(int eq_reduction : {DAQP_EQ_REDUCTION_OFF, DAQP_EQ_REDUCTION_ON}){
+        bool pass = true;
+        Problem p(3);
+        std::vector<DAQPSettings> all = portfolio(eq_reduction);
+        std::vector<DAQPWorkspace> works(all.size());
+        std::vector<DAQPWorkspace*> ptrs(all.size());
+        for(size_t i = 0; i < all.size(); i++){
+            works[i] = DAQPWorkspace{};
+            works[i].settings = &all[i];
+            setup_daqp(&p.qp, &works[i], nullptr);
+            ptrs[i] = &works[i];
+        }
+        DAQPParallel* par = daqp_parallel_setup(ptrs.data(), (int)ptrs.size());
+        pass = pass && par != nullptr;
+        for(int k = 0; par != nullptr && k < 8; k++){
+            int mask = DAQP_UPDATE_v + DAQP_UPDATE_d;
+            const Problem q(100 + k, k == 5 ? 2 : 1); // Data of another problem of the same structure
+            for(int i = 0; i < N; i++) p.f[i] = q.f[i];
+            p.bu[N] = q.bu[N];
+            if(k >= 5){ // A Hessian of another scale from k = 5
+                for(int i = 0; i < N*N; i++) p.H[i] = q.H[i];
+                mask += DAQP_UPDATE_Rinv;
+            }
+            for(DAQPWorkspace* w : ptrs) pass = pass && daqp_update_ldp(mask, w, &p.qp) >= 0;
+            for(size_t i = 0; i < all.size(); i++) all[i].branching = (int)((i + k) % 3);
+
+            Solution s{};
+            DAQPResult res{};
+            res.x = s.x;
+            res.lam = k % 2 ? s.lam : nullptr;
+            daqp_parallel_solve(par, &res);
+            std::vector<DAQPSettings> one(1, all[0]);
+            const Solution ref = solve(p, one);
+            s.exitflag = res.exitflag; s.fval = res.fval;
+            pass = pass && ref.exitflag == DAQP_EXIT_OPTIMAL && same(s, ref);
+            for(int i = 0; i < N; i++) pass = pass && std::fabs(s.x[i] - ref.x[i]) < 1e-6;
+
+            if(k == 3){ // A cutoff in one workspace only
+                all[1].fval_bound = 0;
+                pass = pass && daqp_parallel_solve(par, &res) == DAQP_EXIT_UNSUPPORTED;
+                all[1].fval_bound = DAQP_INF;
+                pass = pass && daqp_parallel_solve(par, &res) == DAQP_EXIT_OPTIMAL &&
+                    std::fabs(res.fval - ref.fval) <= 1e-9*(1 + std::fabs(ref.fval));
+            }
+        }
+        daqp_parallel_free(par);
+        for(DAQPWorkspace& w : works) free_work(&w);
+        std::printf("Reusable solver with updates, eq_reduction = %2d: %s\n", eq_reduction, pass ? "PASS" : "FAIL");
+        all_pass &= pass;
+    }
+
+    // Reusable solver: incompatible workspaces are rejected by the setup; a solver can be freed without
+    // a solve; a single workspace is solved by daqp_solve
+    {
+        Problem p(1), p2(2);
+        p2.bu[N+1] = p2.bl[N+1] = 0.2; // Another problem of the same dimensions
+        std::vector<DAQPSettings> st = portfolio(DAQP_EQ_REDUCTION_OFF);
+        DAQPWorkspace w[3] = {};
+        DAQPWorkspace* ws[3] = {&w[0], &w[1], &w[2]};
+        for(int i = 0; i < 3; i++){
+            w[i].settings = &st[i];
+            setup_daqp(&p.qp, &w[i], nullptr);
+        }
+        bool pass = daqp_parallel_setup(nullptr, 3) == nullptr && daqp_parallel_setup(ws, 0) == nullptr;
+        // Free without a solve (the worker threads are joined)
+        for(int n = 1; n <= 3; n++){
+            DAQPParallel* par = daqp_parallel_setup(ws, n);
+            pass = pass && par != nullptr;
+            daqp_parallel_free(par);
+        }
+        daqp_parallel_free(nullptr);
+        // Shared settings
+        w[2].settings = &st[0];
+        pass = pass && daqp_parallel_setup(ws, 3) == nullptr;
+        w[2].settings = &st[2];
+        // A cutoff, a regularization or a policy of equality reduction in one workspace only
+        st[1].fval_bound = -1;
+        pass = pass && daqp_parallel_setup(ws, 3) == nullptr;
+        st[1].fval_bound = DAQP_INF;
+        st[2].eps_prox = 1e-3;
+        pass = pass && daqp_parallel_setup(ws, 3) == nullptr;
+        st[2].eps_prox = st[0].eps_prox;
+        // Workspaces of different dimensions
+        SmallProblem small(8, 4, 0);
+        DAQPSettings st_small;
+        daqp_default_settings(&st_small);
+        DAQPWorkspace w_small{};
+        w_small.settings = &st_small;
+        setup_daqp(&small.qp, &w_small, nullptr);
+        DAQPWorkspace* mixed[2] = {&w[0], &w_small};
+        pass = pass && daqp_parallel_setup(mixed, 2) == nullptr;
+        // A single workspace and a compatible portfolio
+        Solution s{}, ref{};
+        DAQPResult res{}, res_ref{};
+        res.x = s.x; res_ref.x = ref.x;
+        DAQPParallel* par = daqp_parallel_setup(ws, 1);
+        pass = pass && par != nullptr && daqp_parallel_solve(par, &res) == DAQP_EXIT_OPTIMAL;
+        daqp_parallel_free(par);
+        par = daqp_parallel_setup(ws, 3);
+        pass = pass && par != nullptr && daqp_parallel_solve(par, &res_ref) == DAQP_EXIT_OPTIMAL &&
+            std::fabs(res.fval - res_ref.fval) <= 1e-9*(1 + std::fabs(res.fval));
+        daqp_parallel_free(par);
+        // The solve of a solver whose setup failed
+        DAQPResult none{};
+        pass = pass && daqp_parallel_solve(nullptr, &none) == DAQP_EXIT_UNSUPPORTED;
+        for(auto& wi : w) free_work(&wi);
+        free_work(&w_small);
+        std::printf("Reusable solver: setup rejects incompatible workspaces, free without solve: %s\n",
+                pass ? "PASS" : "FAIL");
+        all_pass &= pass;
+    }
+
+    // Overhead of a parallel solve: persistent worker threads (reusable solver) against the creation
+    // of the threads in every call (daqp_solve_parallel), on a problem that is solved in a fraction of a
+    // millisecond. Only reported, not tested
+    {
+        const int reps = 2000;
+        for(int size : {4, 12, 17})
+        for(int n : {2, 4, 8}){
+            SmallProblem small(size, 2*size/3, 7);
+            std::vector<DAQPSettings> st(n);
+            std::vector<DAQPWorkspace> works(n);
+            std::vector<DAQPWorkspace*> ptrs(n);
+            for(int i = 0; i < n; i++){
+                daqp_default_settings(&st[i]);
+                st[i].branching = i % 3;
+                works[i] = DAQPWorkspace{};
+                works[i].settings = &st[i];
+                setup_daqp(&small.qp, &works[i], nullptr);
+                ptrs[i] = &works[i];
+            }
+            std::vector<c_float> x(small.n);
+            DAQPResult res{};
+            res.x = x.data();
+            int nodes = 0;
+            double t0 = now();
+            for(int r = 0; r < reps; r++) daqp_solve(&res, ptrs[0]);
+            const double t_single = (now() - t0)/reps;
+            t0 = now();
+            for(int r = 0; r < reps; r++) daqp_solve_parallel(&res, ptrs.data(), n);
+            const double t_oneshot = (now() - t0)/reps;
+            DAQPParallel* par = daqp_parallel_setup(ptrs.data(), n);
+            t0 = now();
+            for(int r = 0; r < reps; r++){
+                daqp_parallel_solve(par, &res);
+                nodes += res.nodes;
+            }
+            const double t_pool = (now() - t0)/reps;
+            daqp_parallel_set_spin(par, 100000);
+            t0 = now();
+            for(int r = 0; r < reps; r++) daqp_parallel_solve(par, &res);
+            const double t_spin = (now() - t0)/reps;
+            daqp_parallel_free(par);
+            std::printf("Overhead, %d variables, %d workspaces: time per solve [us]: single %.1f, one-shot parallel %.1f, "
+                    "reusable parallel %.1f, with polling %.1f (%.1f nodes per parallel solve)\n", size, n,
+                    1e6*t_single, 1e6*t_oneshot, 1e6*t_pool, 1e6*t_spin, (double)nodes/reps);
+            for(DAQPWorkspace& w : works) free_work(&w);
+        }
     }
     return all_pass ? 0 : 1;
 }
