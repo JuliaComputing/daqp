@@ -14,7 +14,8 @@ extern "C" {
 //   that an equality elimination installs (and the eliminated constraints have no index there);
 // - the generated storage of the working sets of the tree includes the soft constraints;
 // - the default bound DAQP_INF on the objective is finite and applies to the objective J, also if
-//   the internal objective ||u||^2 = 2(J + c) exceeds it.
+//   the internal objective ||u||^2 = 2(J + c) exceeds it;
+// - the data of branch and bound that code generation writes is defined before the first solve (neq).
 
 namespace {
 
@@ -105,6 +106,34 @@ int main(){
             pass = pass && res.exitflag == DAQP_EXIT_OPTIMAL && std::fabs(x) < 1e-12;
         }
         std::printf("Default bound with a large linear term: %s\n", pass ? "PASS" : "FAIL");
+        all_pass &= pass;
+    }
+    // Code generation before the first solve writes neq = 0. The test runs with MALLOC_PERTURB_ and without
+    // the thread cache of glibc (see CMakeLists.txt), so that an allocation that does not initialize neq
+    // returns nonzero content
+    {
+        c_float H[] = {1, 0, 0, 1}, f[] = {-0.4, -0.6}, bu[] = {1, 1}, bl[] = {0, 0};
+        int sense[] = {DAQP_BINARY, DAQP_BINARY};
+        DAQPProblem qp = {2, 2, 2, H, f, nullptr, bu, bl, sense, nullptr, 0, 0};
+        DAQPSettings settings;
+        daqp_default_settings(&settings);
+        DAQPWorkspace work{};
+        work.settings = &settings;
+        setup_daqp(&qp, &work, nullptr);
+        render_daqp_workspace(&work, "regression_bnb", "./", "rb_");
+        std::ifstream in("regression_bnb.c");
+        std::stringstream ss;
+        ss << in.rdbuf();
+        const std::string src = ss.str();
+        // DAQPBnB rb_bnb_work= {rb_bin_ids, (int)nb, (int)neq, ...
+        const std::string decl = "DAQPBnB rb_bnb_work= {rb_bin_ids, (int)2, (int)";
+        const size_t pos = src.find(decl);
+        const int neq = pos == std::string::npos ? -1 : std::stoi(src.substr(pos + decl.size()));
+        const bool pass = neq == 0 && work.bnb->neq == 0;
+        free_work(&work);
+        std::remove("regression_bnb.c");
+        std::remove("regression_bnb.h");
+        std::printf("Generated branch-and-bound data before the first solve (neq %d): %s\n", neq, pass ? "PASS" : "FAIL");
         all_pass &= pass;
     }
     return all_pass ? 0 : 1;
