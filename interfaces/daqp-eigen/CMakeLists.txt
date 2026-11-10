@@ -47,6 +47,7 @@ if(TEST)
     add_executable(27_bnb_update_binaries tests/27_bnb_update_binaries.cpp)
     add_executable(28_sparse_A tests/28_sparse_A.cpp)
     add_executable(29_bnb_branching tests/29_bnb_branching.cpp)
+    add_executable(32_bnb_regressions tests/32_bnb_regressions.cpp)
 
     set(TARGETS
         00_basic_qp
@@ -79,6 +80,7 @@ if(TEST)
         27_bnb_update_binaries
         28_sparse_A
         29_bnb_branching
+        32_bnb_regressions
     )
 
     foreach(TARGET ${TARGETS})
@@ -90,6 +92,9 @@ if(TEST)
 
         add_test(NAME test_${TARGET} COMMAND ${TARGET})
     endforeach()
+    # Allocations without initialization return nonzero content (glibc), see 32_bnb_regressions
+    set_tests_properties(test_32_bnb_regressions PROPERTIES
+        ENVIRONMENT "MALLOC_PERTURB_=90;GLIBC_TUNABLES=glibc.malloc.tcache_count=0")
 endif()
 
 install(TARGETS ${PROJECT_NAME} EXPORT  ${PROJECT_NAME}Config
