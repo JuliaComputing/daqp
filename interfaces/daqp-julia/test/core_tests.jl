@@ -473,7 +473,7 @@ end
     Random.seed!(2468)
     n, m, ms, nb = 20, 25, 20, 14
     function models(H, f, A, bu, bl, sense; rules = 0:2)
-        ds = [DyadDAQP.Model() for _ in rules]
+        local ds = [DyadDAQP.Model() for _ in rules] # Not the variable ds of the testset
         for (d, rule) in zip(ds, rules)
             DyadDAQP.settings(d, Dict{Symbol,Any}(:branching => Cint(rule)))
             DyadDAQP.setup(d, H, f, A, bu, bl, sense)
@@ -511,6 +511,46 @@ end
     H2, f2, A2, bu2, bl2, sense2 = generate_test_MIQP(n + 1, m + 1, ms + 1, nb)
     ds = [models(H, f, A, bu, bl, sense; rules = 0:0); models(H2, f2, A2, bu2, bl2, sense2; rules = 1:1)]
     @test_throws ArgumentError DyadDAQP.solve_parallel(ds)
+    @test_throws ArgumentError DyadDAQP.ParallelSolver(ds)
+
+    # Reusable solver: repeated solves with updates of f and of the bounds give the solutions of single
+    # solves of fresh models
+    H, f, A, bu, bl, sense = generate_test_MIQP(n, m, ms, nb)
+    # The models keep references to the data, which update overwrites
+    ds = models(H, copy(f), A, copy(bu), copy(bl), sense)
+    for spin in (0, 1000)
+        ps = DyadDAQP.ParallelSolver(ds; spin)
+        flags = Int[]
+        for k in 1:5
+            fk = f + 0.5randn(n)
+            buk = copy(bu)
+            buk[ms+1] = bu[ms+1] - 0.5(k-1)
+            foreach(d -> DyadDAQP.update(d, nothing, fk, nothing, buk, bl), ds)
+            ref = DyadDAQP.solve(models(H, copy(fk), A, copy(buk), copy(bl), sense; rules = 0:0)[1])
+            x, fval, exitflag, info = DyadDAQP.solve(ps)
+            @test exitflag == ref[3]
+            exitflag > 0 && @test isapprox(fval, ref[2]; rtol = 1e-9, atol = 1e-9)
+            push!(flags, exitflag)
+        end
+        @test count(>(0), flags) >= 2
+        # A setting that makes the models incompatible is rejected by the solve; once it is restored,
+        # the solver is usable again
+        DyadDAQP.settings(ds[2], Dict{Symbol,Any}(:fval_bound => 0.0))
+        @test_throws ArgumentError DyadDAQP.solve(ps)
+        DyadDAQP.settings(ds[2], Dict{Symbol,Any}(:fval_bound => DyadDAQP.settings(ds[1]).fval_bound))
+        @test DyadDAQP.solve(ps)[3] == flags[end]
+        DyadDAQP.delete!(ps)
+        DyadDAQP.delete!(ps)
+        @test_throws ArgumentError DyadDAQP.solve(ps)
+    end
+    # Free without a solve, also by the finalizer
+    DyadDAQP.delete!(DyadDAQP.ParallelSolver(ds))
+    DyadDAQP.ParallelSolver(ds)
+    GC.gc()
+    # Models with incompatible settings are rejected by the setup
+    DyadDAQP.settings(ds[3], Dict{Symbol,Any}(:eps_prox => 1e-3))
+    @test_throws ArgumentError DyadDAQP.ParallelSolver(ds)
+    @test_throws ArgumentError DyadDAQP.ParallelSolver(DyadDAQP.Model[])
 end
 
 @testset "Parallel BnB with groups" begin
