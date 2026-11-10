@@ -239,7 +239,9 @@ int setup_daqp_bnb(DAQPWorkspace* work, int* sense, int nb, int ns){
     int i, nadded;
     if(nb > work->n) return DAQP_EXIT_OVERDETERMINED_INITIAL;
     if((work->bnb == NULL) && (nb >0)){
-        work->bnb= malloc(sizeof(DAQPBnB));
+        // Zeroed, so that the counters that are only set by a search (e.g. neq), which code generation
+        // writes, are defined before the first solve
+        work->bnb= calloc(1,sizeof(DAQPBnB));
 
         work->bnb->nb = nb;
         // Detect which constraints are binary

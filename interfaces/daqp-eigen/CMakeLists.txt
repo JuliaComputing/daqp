@@ -96,6 +96,9 @@ if(TEST)
 
         add_test(NAME test_${TARGET} COMMAND ${TARGET})
     endforeach()
+    # Allocations without initialization return nonzero content (glibc), see 32_bnb_regressions
+    set_tests_properties(test_32_bnb_regressions PROPERTIES
+        ENVIRONMENT "MALLOC_PERTURB_=90;GLIBC_TUNABLES=glibc.malloc.tcache_count=0")
 endif()
 
 install(TARGETS ${PROJECT_NAME} EXPORT  ${PROJECT_NAME}Config
