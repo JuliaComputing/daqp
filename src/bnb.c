@@ -41,8 +41,8 @@ static void daqp_bnb_finish(DAQPWorkspace* work){
 }
 #else
 #define daqp_bnb_sync(work,c) 0
-#define daqp_bnb_publish(work,c)
-#define daqp_bnb_finish(work)
+#define daqp_bnb_publish(work,c) ((void)0)
+#define daqp_bnb_finish(work) ((void)0)
 #endif
 
 static c_float daqp_binary_diff(const int id, DAQPWorkspace* work){

@@ -583,7 +583,8 @@ or the problem has no binary constraints, only the first model is solved. Throws
 models differ in their dimensions, state (equality reduction, regularization) or other settings.
 
 The call does not return to the Julia runtime until all threads have finished, so a garbage collection
-requested by another Julia thread waits for it.
+requested by another Julia thread waits for it. For repeated solves, [`ParallelSolver`](@ref) creates the
+threads once.
 """
 function solve_parallel(ds::AbstractVector{DyadDAQP.Model})
     isempty(ds) && throw(ArgumentError("solve_parallel: no models"))
@@ -602,6 +603,73 @@ function solve_parallel(ds::AbstractVector{DyadDAQP.Model})
     result = result_ptr[]
     result.exitflag == UNSUPPORTED &&
         throw(ArgumentError("solve_parallel: the models must hold problems of the same dimensions and state, with settings that only differ in branching, time_limit and iter_limit"))
+    info = (x = d.x, λ = d.λ, fval = result.fval,
+            exitflag = result.exitflag,
+            status = DyadDAQP.flag2status[result.exitflag],
+            solve_time = result.solve_time,
+            setup_time = 0.0,
+            iterations = result.iter, nodes = result.nodes)
+    return copy(d.x), result.fval, result.exitflag, info
+end
+
+"""
+    ps = ParallelSolver(models::AbstractVector{Model}; spin = 0)
+    x, fval, exitflag, info = solve(ps)
+
+Reusable parallel branch and bound (see [`solve_parallel`](@ref)): the models are checked and the
+operating-system threads are created once, by the constructor, and each `solve(ps)` solves the current
+problems of the models. The threads wait on a condition variable between the solves; with `spin > 0`, they
+first poll `spin` times, which shortens the start and the end of a solve at the cost of processor time.
+
+The models may be updated (`update`, `settings`, `setup`) between the solves; every solve repeats the
+checks of the dimensions and the settings and throws an `ArgumentError` if they fail. The models are kept
+alive by `ps`. The threads are joined by `DyadDAQP.delete!(ps)` or by the finalizer. A `ParallelSolver`
+must not be solved by two tasks at the same time.
+
+Throws an `ArgumentError` if the models are incompatible (as `solve_parallel`).
+"""
+mutable struct ParallelSolver
+    ptr::Ptr{Cvoid}
+    models::Vector{DyadDAQP.Model}
+    function ParallelSolver(ds::AbstractVector{DyadDAQP.Model}; spin::Integer = 0)
+        isempty(ds) && throw(ArgumentError("ParallelSolver: no models"))
+        all(d -> d.has_model, ds) || throw(ArgumentError("ParallelSolver: every model must be set up"))
+        Libc.Libdl.dlsym_e(Libc.Libdl.dlopen(DyadDAQP.libdaqp), :daqp_parallel_setup) == C_NULL &&
+            error("ParallelSolver: the loaded libdaqp does not provide daqp_parallel_setup")
+        models = collect(DyadDAQP.Model, ds)
+        works = Ptr{DyadDAQP.Workspace}[m.work for m in models]
+        ptr = GC.@preserve models ccall((:daqp_parallel_setup, DyadDAQP.libdaqp), Ptr{Cvoid},
+                                        (Ptr{Ptr{DyadDAQP.Workspace}}, Cint), works, length(works))
+        ptr == C_NULL && throw(ArgumentError("ParallelSolver: the models must hold problems of the same dimensions and state, with settings of their own that only differ in branching, time_limit and iter_limit"))
+        ps = new(ptr, models)
+        finalizer(DyadDAQP.delete!, ps)
+        spin > 0 && ccall((:daqp_parallel_set_spin, DyadDAQP.libdaqp), Cvoid, (Ptr{Cvoid}, Cint), ptr, spin)
+        return ps
+    end
+end
+
+function delete!(ps::ParallelSolver)
+    if ps.ptr != C_NULL
+        ccall((:daqp_parallel_free, DyadDAQP.libdaqp), Cvoid, (Ptr{Cvoid},), ps.ptr)
+        ps.ptr = C_NULL
+    end
+    return nothing
+end
+
+function solve(ps::ParallelSolver)
+    ps.ptr == C_NULL && throw(ArgumentError("solve: the ParallelSolver has been deleted"))
+    all(d -> d.has_model && d.work != C_NULL, ps.models) ||
+        throw(ArgumentError("solve: every model of the ParallelSolver must be set up"))
+    d = first(ps.models)
+    result_ptr = Ref(DAQPResult(d.x, d.λ))
+    GC.@preserve ps begin
+        ccall((:daqp_parallel_solve, DyadDAQP.libdaqp), Cint, (Ptr{Cvoid}, Ref{DyadDAQP.DAQPResult}),
+              ps.ptr, result_ptr)
+    end
+    foreach(m -> m.has_solved = true, ps.models)
+    result = result_ptr[]
+    result.exitflag == UNSUPPORTED &&
+        throw(ArgumentError("solve: the models of the ParallelSolver must hold problems of the same dimensions and state, with settings that only differ in branching, time_limit and iter_limit"))
     info = (x = d.x, λ = d.λ, fval = result.fval,
             exitflag = result.exitflag,
             status = DyadDAQP.flag2status[result.exitflag],
