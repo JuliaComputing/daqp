@@ -142,6 +142,9 @@ extern "C" {
 #define DAQP_EXIT_OVERDETERMINED_INITIAL -6
 #define DAQP_EXIT_TIMELIMIT -7
 #define DAQP_EXIT_UNSUPPORTED -8
+// The objective data (f or H) holds an entry that is not finite or whose magnitude is at least DAQP_INF
+// (which only bounds may take, as the absence of a bound)
+#define DAQP_EXIT_INVALID_DATA -9
 
 // UPDATE LDP MASKS
 #define DAQP_UPDATE_Rinv 1

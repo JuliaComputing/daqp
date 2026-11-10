@@ -309,9 +309,24 @@ static int daqp_update_ldp_core(int mask, DAQPWorkspace *work, DAQPProblem* qp){
 // fixed) mean that the mixed-integer problem is infeasible
 #define DAQP_PRESOLVED_FLAG(flag,presolved) (((presolved) && (flag) == DAQP_EXIT_OVERDETERMINED_INITIAL) ?\
         DAQP_EXIT_INFEASIBLE : (flag))
+// Whether the len entries of a are finite and of magnitude below DAQP_INF (a NULL array is valid)
+static int daqp_valid_data(const c_float* a, const size_t len){
+    size_t i;
+    if(a == NULL) return 1;
+    for(i = 0; i < len; i++)
+        if(!(a[i] < DAQP_INF && a[i] > -DAQP_INF)) return 0; // Also false for NaN
+    return 1;
+}
+
 int daqp_update_ldp(int mask, DAQPWorkspace *work, DAQPProblem* qp){
     int i, flag;
     DAQPProblem* pq;
+    // Objective data of that magnitude cannot be resolved in floating point (the result would be
+    // arbitrary); it is rejected before the workspace is changed
+    if((mask&DAQP_UPDATE_v && !daqp_valid_data(qp->f,qp->n)) ||
+            (mask&DAQP_UPDATE_Rinv && !daqp_valid_data(qp->H, qp->problem_type == 2 ? // A packed factor
+                                                       DAQP_ARSUM((size_t)qp->n) : (size_t)qp->n*qp->n)))
+        return DAQP_EXIT_INVALID_DATA;
     const int was_reduced = DAQP_IS_REDUCED(work);
     daqp_eq_restore(work);
     work->qp = qp;

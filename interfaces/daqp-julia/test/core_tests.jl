@@ -468,6 +468,21 @@ end
     end
 end
 
+@testset "Objective data beyond DAQP_INF" begin
+    # Such data cannot be resolved in floating point and is rejected instead of giving an arbitrary result
+    @test DyadDAQP.flag2status[DyadDAQP.INVALID_DATA] == :Invalid_Data
+    for v in (2e30, -1e30, NaN, Inf)
+        @test DyadDAQP.setup(DyadDAQP.Model(), Matrix(1.0I, 2, 2), [v, 0.0], zeros(0, 2), [1.0, 1.0], [0.0, -1.0])[1] ==
+            DyadDAQP.INVALID_DATA
+        @test DyadDAQP.setup(DyadDAQP.Model(), [1.0 0; 0 v], [0.0, 0.0], zeros(0, 2), [1.0, 1.0], [0.0, -1.0])[1] ==
+            DyadDAQP.INVALID_DATA
+    end
+    # A factorized Hessian holds the packed upper triangle
+    d = DyadDAQP.Model()
+    @test DyadDAQP.setup(d, cholesky([2.0 0.5; 0.5 1.0]), [-1.0, 0.0], zeros(0, 2), [1.0, 1.0], [0.0, -1.0])[1] == 1
+    @test DyadDAQP.solve(d)[3] == DyadDAQP.OPTIMAL
+end
+
 @testset "BnB branching rules" begin
     # All rules find the optimal solution (abs_subopt = 0); a priority list in reverse order of the
     # binary constraints branches as the rule last

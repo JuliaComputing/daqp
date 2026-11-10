@@ -46,6 +46,7 @@ const  NONCONVEX      = -5
 const  OVERDETERMINED = -6
 const  TIMELIMIT      = -7
 const  UNSUPPORTED    = -8
+const  INVALID_DATA   = -9
 
 const flag2status= Dict{Int,Symbol}(5 => :Feasible,
                                     4 => :Optimal_Inexact,
@@ -59,4 +60,5 @@ const flag2status= Dict{Int,Symbol}(5 => :Feasible,
                                    -5 => :Nonconvex_Problem,
                                    -6 => :Initial_Overdetermined,
                                    -7 => :Time_Limit,
-                                   -8 => :Unsupported_Problem)
+                                   -8 => :Unsupported_Problem,
+                                   -9 => :Invalid_Data)

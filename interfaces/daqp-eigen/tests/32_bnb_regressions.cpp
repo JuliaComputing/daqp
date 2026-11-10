@@ -1,4 +1,5 @@
 #include "api.h"
+#include "utils.h"
 extern "C" {
 #include "codegen.h"
 }
@@ -15,7 +16,8 @@ extern "C" {
 // - the generated storage of the working sets of the tree includes the soft constraints;
 // - the default bound DAQP_INF on the objective is finite and applies to the objective J, also if
 //   the internal objective ||u||^2 = 2(J + c) exceeds it;
-// - the data of branch and bound that code generation writes is defined before the first solve (neq).
+// - the data of branch and bound that code generation writes is defined before the first solve (neq);
+// - objective data that is not finite or of magnitude at least DAQP_INF is rejected at setup and update.
 
 namespace {
 
@@ -134,6 +136,48 @@ int main(){
         std::remove("regression_bnb.c");
         std::remove("regression_bnb.h");
         std::printf("Generated branch-and-bound data before the first solve (neq %d): %s\n", neq, pass ? "PASS" : "FAIL");
+        all_pass &= pass;
+    }
+    // Objective data beyond DAQP_INF or not finite is rejected (DAQP_EXIT_INVALID_DATA), at setup and at an
+    // update, which leaves the workspace unchanged
+    {
+        bool pass = true;
+        c_float H[] = {1, 0, 0, 1}, bu[] = {1, 1}, bl[] = {0, -1}, x[2];
+        int sense[] = {DAQP_BINARY, 0};
+        auto setup = [&](c_float* f, c_float* Hq, DAQPWorkspace& work, DAQPSettings& settings){
+            DAQPProblem qp = {2, 2, 2, Hq, f, nullptr, bu, bl, sense, nullptr, 0, 0};
+            daqp_default_settings(&settings);
+            work = DAQPWorkspace{};
+            work.settings = &settings;
+            return setup_daqp(&qp, &work, nullptr);
+        };
+        const c_float bad[] = {2*DAQP_INF, -DAQP_INF, NAN, INFINITY};
+        for(c_float v : bad){
+            DAQPSettings settings;
+            DAQPWorkspace work;
+            c_float f[] = {v, 0};
+            pass = pass && setup(f, H, work, settings) == DAQP_EXIT_INVALID_DATA;
+            c_float Hb[] = {1, 0, 0, v};
+            c_float fz[] = {0, 0};
+            pass = pass && setup(fz, Hb, work, settings) == DAQP_EXIT_INVALID_DATA;
+        }
+        // A valid setup, a rejected update of f, and a solve with the previous data
+        DAQPSettings settings;
+        DAQPWorkspace work;
+        c_float f[] = {-0.4, -0.2};
+        pass = pass && setup(f, H, work, settings) == 1;
+        DAQPProblem qp = {2, 2, 2, H, f, nullptr, bu, bl, sense, nullptr, 0, 0};
+        c_float fbad[] = {1e31, 0};
+        DAQPProblem qpb = qp;
+        qpb.f = fbad;
+        pass = pass && daqp_update_ldp(DAQP_UPDATE_v, &work, &qpb) == DAQP_EXIT_INVALID_DATA;
+        DAQPResult res{};
+        res.x = x;
+        work.qp = &qp;
+        daqp_solve(&res, &work);
+        pass = pass && res.exitflag == DAQP_EXIT_OPTIMAL && std::fabs(x[0]) < 1e-9 && std::fabs(x[1]-0.2) < 1e-9;
+        free_work(&work);
+        std::printf("Objective data beyond DAQP_INF rejected: %s\n", pass ? "PASS" : "FAIL");
         all_pass &= pass;
     }
     return all_pass ? 0 : 1;
