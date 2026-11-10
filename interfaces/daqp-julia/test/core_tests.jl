@@ -621,6 +621,110 @@ end
     end
 end
 
+@testset "BnB branch preference" begin
+    # Child order PREFERRED: every preference gives the optimal solution (abs_subopt = 0) with equality
+    # reduction off and on, and a preference that agrees with the optimal solution reduces the nodes. The
+    # equality constraint x[1] = 0.3 lets the equality reduction drop the bound of x[1], so the indices of the
+    # binary constraints differ between the original and the reduced problem.
+    Random.seed!(8642)
+    nv, nbv = 15, 10
+    bins = 2:nbv+1
+    nodes = Dict((eqr, k) => 0 for eqr in (0, 1), k in (:nearest, :agree, :oppose))
+    for trial in 1:15
+        Mv = randn(nv, nv)
+        Hv = Mv'Mv + I
+        t = fill(0.1, nv); t[bins] .= 0.2 .+ 0.6 .* rand(nbv)
+        fv = -Hv * t
+        Av = [0.0 ones(1, nbv) zeros(1, nv - nbv - 1); 1.0 zeros(1, nv - 1)]
+        buv = [2.0; ones(nbv); fill(2.0, nv - nbv - 1); 2.5 + 3rand(); 0.3]
+        blv = [-2.0; zeros(nbv); fill(-2.0, nv - nbv - 1); -1e30; 0.3]
+        sensev = Cint[0; fill(DyadDAQP.BINARY, nbv); zeros(Cint, nv - nbv); DyadDAQP.EQUALITY]
+        mv = length(buv)
+        for eqr in (0, 1)
+            function solve_pref(pref; rule = DyadDAQP.DAQP_BRANCHING_FIRST, child_order = DyadDAQP.DAQP_CHILD_PREFERRED)
+                d = DyadDAQP.Model()
+                DyadDAQP.settings(d, Dict{Symbol,Any}(:branching => Cint(rule), :child_order => Cint(child_order),
+                                                      :eq_reduction => Cint(eqr)))
+                DyadDAQP.setup(d, Hv, fv, Av, buv, blv, sensev)
+                pref === nothing || DyadDAQP.set_branch_preference(d, pref)
+                return DyadDAQP.solve(d)
+            end
+            for rule in (DyadDAQP.DAQP_BRANCHING_FIRST, DyadDAQP.DAQP_BRANCHING_MOST_FRACTIONAL)
+                x0, f0, e0, i0 = solve_pref(nothing; rule, child_order = DyadDAQP.DAQP_CHILD_NEAREST)
+                @test e0 == DyadDAQP.OPTIMAL
+                agree = zeros(Int, mv); agree[bins] .= ifelse.(x0[bins] .> 0.5, 1, -1)
+                prefs = (agree, -agree, rand(-1:1, mv), zeros(Int, mv))
+                for (k, pref) in enumerate(prefs)
+                    x, fval, exitflag, info = solve_pref(pref; rule)
+                    @test exitflag == DyadDAQP.OPTIMAL
+                    @test isapprox(fval, f0; rtol = 1e-9, atol = 1e-9)
+                    @test all(xi -> min(abs(xi), abs(xi - 1)) < 1e-8, x[bins])
+                    k == 4 && @test info.nodes == i0.nodes # A zero preference explores the nodes of NEAREST
+                    if rule == DyadDAQP.DAQP_BRANCHING_FIRST
+                        k == 1 && (nodes[(eqr, :agree)] += info.nodes)
+                        k == 2 && (nodes[(eqr, :oppose)] += info.nodes)
+                    end
+                end
+                rule == DyadDAQP.DAQP_BRANCHING_FIRST && (nodes[(eqr, :nearest)] += i0.nodes)
+                # Without a preference, PREFERRED explores the nodes of NEAREST
+                @test solve_pref(nothing; rule)[4].nodes == i0.nodes
+            end
+        end
+        # Parallel portfolio with a preference per model
+        _, fref, _, _ = DyadDAQP.solve(let d = DyadDAQP.Model(); DyadDAQP.setup(d, Hv, fv, Av, buv, blv, sensev); d end)
+        orders = [(DyadDAQP.DAQP_BRANCHING_FIRST, DyadDAQP.DAQP_CHILD_PREFERRED),
+                  (DyadDAQP.DAQP_BRANCHING_FIRST, DyadDAQP.DAQP_CHILD_NEAREST),
+                  (DyadDAQP.DAQP_BRANCHING_MOST_FRACTIONAL, DyadDAQP.DAQP_CHILD_PREFERRED)]
+        ds = [DyadDAQP.Model() for _ in orders]
+        for (d, (rule, order)) in zip(ds, orders)
+            DyadDAQP.settings(d, Dict{Symbol,Any}(:branching => Cint(rule), :child_order => Cint(order)))
+            DyadDAQP.setup(d, Hv, fv, Av, buv, blv, sensev)
+            DyadDAQP.set_branch_preference(d, rand(-1:1, mv))
+        end
+        x, fval, exitflag, _ = DyadDAQP.solve_parallel(ds)
+        @test exitflag == DyadDAQP.OPTIMAL
+        @test isapprox(fval, fref; rtol = 1e-9, atol = 1e-9)
+    end
+    for eqr in (0, 1)
+        @test nodes[(eqr, :agree)] < nodes[(eqr, :nearest)]
+        @test nodes[(eqr, :agree)] < nodes[(eqr, :oppose)]
+    end
+    # Invalid inputs
+    d = DyadDAQP.Model()
+    DyadDAQP.setup(d, Matrix(1.0I, 2, 2), [-0.5, -0.5], zeros(0, 2), [1.0, 1.0], [0.0, 0.0], Cint[DyadDAQP.BINARY, 0])
+    @test_throws ArgumentError DyadDAQP.set_branch_preference(d, [1])
+    @test_throws ArgumentError DyadDAQP.set_branch_preference(d, [1, 0, 0])
+    @test_throws ArgumentError DyadDAQP.set_branch_preference(d, [2, 0])
+    @test_throws ArgumentError DyadDAQP.set_branch_preference(d, [-2, 0])
+    DyadDAQP.set_branch_preference(d, [1, 0])
+    DyadDAQP.set_branch_preference(d, Int[])
+    @test DyadDAQP.solve(d)[3] == DyadDAQP.OPTIMAL
+    dc = DyadDAQP.Model()
+    DyadDAQP.setup(dc, Matrix(1.0I, 2, 2), [-0.5, -0.5], zeros(0, 2), [1.0, 1.0], [0.0, 0.0], Cint[0, 0])
+    @test_throws ArgumentError DyadDAQP.set_branch_preference(dc, [1, 0])
+
+    # Generated code does not hold the preference; the setting is kept
+    if !isnothing(Sys.which("gcc"))
+        dg = DyadDAQP.Model()
+        DyadDAQP.settings(dg, Dict{Symbol,Any}(:child_order => Cint(DyadDAQP.DAQP_CHILD_PREFERRED)))
+        DyadDAQP.setup(dg, Matrix(1.0I, 3, 3), [-0.4, -0.6, -0.5], zeros(0, 3), ones(3), zeros(3),
+                       Cint[DyadDAQP.BINARY, DyadDAQP.BINARY, 0])
+        DyadDAQP.set_branch_preference(dg, [1, -1, 0])
+        mktempdir() do dir
+            DyadDAQP.codegen(dg; dir, src = true)
+            library = joinpath(dir, "generated." * Base.Libc.Libdl.dlext)
+            run(`gcc -shared -fPIC -I$dir $(joinpath(dir, "daqp_workspace.c")) -o $library`)
+            handle = Base.Libc.Libdl.dlopen(library)
+            try
+                work = unsafe_load(Ptr{DyadDAQP.Workspace}(Base.Libc.Libdl.dlsym(handle, :daqp_work)))
+                @test unsafe_load(work.settings).child_order == DyadDAQP.DAQP_CHILD_PREFERRED
+            finally
+                Base.Libc.Libdl.dlclose(handle)
+            end
+        end
+    end
+end
+
 @testset "BnB root warm start" begin
     Random.seed!(4321)
     H,f,A,bu,bl,sense = generate_test_MIQP(20,60,20,10)

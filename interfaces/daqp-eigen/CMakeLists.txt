@@ -50,6 +50,7 @@ if(TEST)
     add_executable(30_bnb_parallel tests/30_bnb_parallel.cpp)
     add_executable(31_bnb_child_order tests/31_bnb_child_order.cpp)
     add_executable(32_bnb_regressions tests/32_bnb_regressions.cpp)
+    add_executable(34_bnb_branch_preference tests/34_bnb_branch_preference.cpp)
 
     set(TARGETS
         00_basic_qp
@@ -85,6 +86,7 @@ if(TEST)
         30_bnb_parallel
         31_bnb_child_order
         32_bnb_regressions
+        34_bnb_branch_preference
     )
 
     foreach(TARGET ${TARGETS})

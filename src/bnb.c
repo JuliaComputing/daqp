@@ -411,6 +411,15 @@ static int daqp_branch_candidate(const int id, DAQPNode* node, DAQPWorkspace* wo
     return *dist > *tol;
 }
 
+// The preferred bound (+1 upper, -1 lower, 0 none) of the constraint id of the problem in the workspace. The
+// preference is stored for the constraints of the original problem; an installed equality elimination keeps
+// the original constraint eq->keep[id] in place id
+static int daqp_bnb_preference(const int id, DAQPWorkspace* work){
+    const int orig = (work->eq != NULL && work->eq->installed) ? work->eq->keep[id] : id;
+    if(work->bnb->branch_pref == NULL || orig >= work->bnb->n_branch_pref) return 0;
+    return work->bnb->branch_pref[orig];
+}
+
 // Branch over the binary constraint id (see daqp_branch_candidate for diff, dist and tol)
 static int daqp_branch_on(const int id, const c_float diff, c_float dist, const c_float tol,
         DAQPNode* node, DAQPWorkspace* work){
@@ -421,11 +430,15 @@ static int daqp_branch_on(const int id, const c_float diff, c_float dist, const 
     const c_float lb_far = work->fval + dist_far*dist_far;
     // diff < 0: the relaxation is above the midpoint, so the upper bound is the nearest
     const int near_upper = diff < 0;
-    int upper_first;
+    int upper_first, pref;
     switch(work->settings->child_order){
         case DAQP_CHILD_FARTHEST: upper_first = !near_upper; break;
         case DAQP_CHILD_UP:       upper_first = 1; break;
         case DAQP_CHILD_DOWN:     upper_first = 0; break;
+        case DAQP_CHILD_PREFERRED:
+            pref = daqp_bnb_preference(id,work);
+            upper_first = pref == 0 ? near_upper : pref > 0;
+            break;
         default:                  upper_first = near_upper; // DAQP_CHILD_NEAREST
     }
     // The child spawned in node+1 is explored first, and its lower bound is the one of the

@@ -112,7 +112,14 @@ The setting `child_order` selects which of the two children of a node is explore
 - `0` (default): the one whose bound of the binary constraint is nearest to the relaxation;
 - `1`: the one whose bound is farthest from the relaxation;
 - `2`: the one with the upper bound active;
-- `3`: the one with the lower bound active.
+- `3`: the one with the lower bound active;
+- `4`: the one with the bound given for the constraint in a preference, and the nearest if the
+  preference gives no bound. The preference holds one entry per constraint (`+1`: upper bound,
+  `-1`: lower bound, `0`: none) and is set after the setup with `set_branch_preference(model, dirs)`
+  in Julia or `daqp_set_branch_preference(work, dirs, m)` in C; an empty preference clears it. In MPC,
+  the preference can be taken from the solution of the previous sample shifted by one step, so that
+  the first dive of the search follows the previous plan. The preference is not supported in
+  generated code, where `4` explores the nearest child first.
 
 The rule and the child order do not change the solution if the suboptimality tolerances are zero, but the number of
 nodes can differ substantially. In MPC with binary controls, the order of the constraints is often the

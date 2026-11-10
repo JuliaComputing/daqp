@@ -38,6 +38,7 @@ const DAQP_CHILD_NEAREST = 0
 const DAQP_CHILD_FARTHEST = 1
 const DAQP_CHILD_UP = 2
 const DAQP_CHILD_DOWN = 3
+const DAQP_CHILD_PREFERRED = 4 # See set_branch_preference
 
 # Exit Flags
 const  FEASIBLE       = 5

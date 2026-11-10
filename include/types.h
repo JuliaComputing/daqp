@@ -127,6 +127,10 @@ typedef struct{
     int n_priority;
 
     void* shared; // DAQPBnBShared of a parallel solve (see daqp_solve_parallel), else NULL
+
+    int* branch_pref; // Preferred bound of each constraint of the original problem for DAQP_CHILD_PREFERRED
+                      // (+1 upper, -1 lower, 0 none; see daqp_set_branch_preference), or NULL
+    int n_branch_pref;
 }DAQPBnB;
 
 typedef struct{

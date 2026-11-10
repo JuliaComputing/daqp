@@ -568,6 +568,23 @@ function set_branch_priority(d::DyadDAQP.Model, ids::AbstractVector{<:Integer})
 end
 
 """
+    set_branch_preference(d::Model, dirs)
+
+Set the preferred bound of each constraint for the child order `DAQP_CHILD_PREFERRED` (setting
+`child_order = 4`): `dirs` holds one entry per constraint of the problem, `+1` if the child with the upper bound
+active is explored first, `-1` if the child with the lower bound active is explored first, and `0` if the nearest
+is explored first. Entries of constraints that are not binary are not used. An empty `dirs` clears the
+preference. Call after `setup` of a problem with binary constraints.
+"""
+function set_branch_preference(d::DyadDAQP.Model, dirs::AbstractVector{<:Integer})
+    c = Cint.(dirs)
+    flag = ccall((:daqp_set_branch_preference, DyadDAQP.libdaqp), Cint,
+                 (Ptr{DyadDAQP.Workspace}, Ptr{Cint}, Cint), d.work, c, length(c))
+    flag < 0 && throw(ArgumentError("set_branch_preference: the model has no binary constraints set up, the length of dirs is neither 0 nor the number of constraints, or an entry is not -1, 0 or 1"))
+    return nothing
+end
+
+"""
     x, fval, exitflag, info = solve_parallel(models::AbstractVector{Model})
 
 Solve a mixed-integer problem with parallel branch and bound. Each model holds the same problem, set up

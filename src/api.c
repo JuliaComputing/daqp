@@ -262,6 +262,8 @@ int setup_daqp_bnb(DAQPWorkspace* work, int* sense, int nb, int ns){
         work->bnb->priority = NULL; // Set by daqp_set_branch_priority
         work->bnb->n_priority = 0;
         work->bnb->shared = NULL; // Set by daqp_solve_parallel
+        work->bnb->branch_pref = NULL; // Set by daqp_set_branch_preference
+        work->bnb->n_branch_pref = 0;
     }
     return 1;
 }
@@ -284,6 +286,31 @@ int daqp_set_branch_priority(DAQPWorkspace* work, const int* ids, const int n){
     free(work->bnb->priority);
     work->bnb->priority = p;
     work->bnb->n_priority = n;
+    return 1;
+}
+
+// Set the preferred bound of each constraint for DAQPSettings.child_order = DAQP_CHILD_PREFERRED: dirs holds
+// one entry per constraint of the original problem (0-based, n = m): +1 if the child with the upper bound
+// active is explored first, -1 if the child with the lower bound active is explored first, and 0 if the
+// nearest is explored first. Entries of constraints that are not binary are not used. n = 0 clears the
+// preference (all children are then explored in the order of DAQP_CHILD_NEAREST). Must be called after the
+// setup of a problem with binary constraints. Returns 1 on success, -1 if the workspace has no
+// branch-and-bound data, n is neither 0 nor the number of constraints, an entry is not in {-1, 0, 1}, or
+// the memory cannot be allocated.
+int daqp_set_branch_preference(DAQPWorkspace* work, const int* dirs, const int n){
+    int i, *p = NULL;
+    const int m = (work->eq != NULL && work->eq->installed) ? work->eq->m : work->m;
+    if(work->bnb == NULL || (n != 0 && n != m)) return -1;
+    for(i = 0; i < n; i++) if(dirs[i] < -1 || dirs[i] > 1) return -1;
+    if(n > 0){
+        // Reuse the array if it has the same length (the preference is typically set before every solve)
+        p = (work->bnb->n_branch_pref == n) ? work->bnb->branch_pref : malloc(n*sizeof(int));
+        if(p == NULL) return -1;
+        for(i = 0; i < n; i++) p[i] = dirs[i];
+    }
+    if(p != work->bnb->branch_pref) free(work->bnb->branch_pref);
+    work->bnb->branch_pref = p;
+    work->bnb->n_branch_pref = n;
     return 1;
 }
 
@@ -359,6 +386,7 @@ void free_daqp_bnb(DAQPWorkspace* work){
         free(work->bnb->xtmp);
         free(work->bnb->ps_qp);
         free(work->bnb->priority);
+        free(work->bnb->branch_pref);
         free(work->bnb);
         work->bnb = NULL;
     }

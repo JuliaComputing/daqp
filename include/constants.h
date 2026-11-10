@@ -58,11 +58,14 @@ extern "C" {
 //   NEAREST:  the one whose bound of the binary constraint is nearest to the relaxation,
 //   FARTHEST: the one whose bound is farthest from the relaxation,
 //   UP:       the one with the upper bound active,
-//   DOWN:     the one with the lower bound active.
+//   DOWN:     the one with the lower bound active,
+//   PREFERRED: the one with the bound given for the constraint by daqp_set_branch_preference, and the
+//             nearest if no bound is given (not supported in generated code, where it is NEAREST).
 #define DAQP_CHILD_NEAREST 0
 #define DAQP_CHILD_FARTHEST 1
 #define DAQP_CHILD_UP 2
 #define DAQP_CHILD_DOWN 3
+#define DAQP_CHILD_PREFERRED 4
 
 // Equality-reduction policy (DAQPSettings.eq_reduction). AUTO only reduces
 // solves that start from scratch, which the setup/update marks with

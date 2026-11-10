@@ -396,6 +396,9 @@ void write_daqp_bnb_src(FILE*  f, DAQPBnB* bnb, const int n, const char* prefix)
     if(bnb->n_priority > 0) fprintf(f, "%sbranch_priority, (int)%d, ", prefix, bnb->n_priority);
     else fprintf(f, "NULL, (int)0, "); // priority, n_priority
     fprintf(f, "NULL, "); // shared
+    // The branch preference is set per solve through the API, which generated code does not include, so
+    // DAQP_CHILD_PREFERRED explores the nearest child first in generated code
+    fprintf(f, "NULL, (int)0, "); // branch_pref, n_branch_pref
 
     fprintf(f, "};\n\n");
 }
