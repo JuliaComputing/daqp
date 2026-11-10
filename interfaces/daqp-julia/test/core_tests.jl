@@ -561,14 +561,14 @@ end
     opts(rule, eq) = Dict{Symbol,Any}(:branching => Cint(rule), :abs_subopt => 0.0, :rel_subopt => 0.0,
                                       :eq_reduction => Cint(eq))
     function split_models(H, f, A, bu, bl, sense, vars; rules = 0:0, eq = -1)
-        ds, groups = DyadDAQP.Model[], Int[]
+        local ds, groups = DyadDAQP.Model[], Int[] # Not the variables of the testset
         for (g, values) in enumerate(Iterators.product(ntuple(_ -> 0:1, length(vars))...))
             bug, blg = copy(bu), copy(bl)
             bug[vars] .= values; blg[vars] .= values
             for rule in rules
                 d = DyadDAQP.Model()
                 DyadDAQP.settings(d, opts(rule, eq))
-                DyadDAQP.setup(d, H, f, A, bug, blg, sense)
+                DyadDAQP.setup(d, H, copy(f), A, bug, blg, sense) # update writes into f
                 push!(ds, d); push!(groups, g)
             end
         end
@@ -617,6 +617,34 @@ end
     # A single group is the portfolio
     ds, _ = split_models(H, f, A, bu, bl, sense, Int[]; rules = 0:2)
     @test DyadDAQP.solve_parallel(ds; groups = [1, 1, 1])[3] == DyadDAQP.OPTIMAL
+
+    # Reusable solver with groups: repeated solves with updates of f give the optimum of the single solve;
+    # f that differs between the groups is rejected by a solve, and the solver is usable again once it is
+    # restored; H that differs is rejected by the constructor
+    H, f, A, bu, bl, sense = generate_test_MIQP(n, m, ms, nb)
+    ds, groups = split_models(H, f, A, bu, bl, sense, [1, 2]; rules = 0:1)
+    ps = DyadDAQP.ParallelSolver(ds; groups)
+    for k in 1:4
+        fk = f + 0.5randn(n)
+        foreach(d -> DyadDAQP.update(d, nothing, fk, nothing, nothing, nothing), ds)
+        _, fref, eref = single(H, copy(fk), A, bu, bl, sense)
+        x, fval, exitflag, _ = DyadDAQP.solve(ps)
+        @test exitflag == eref == DyadDAQP.OPTIMAL
+        @test isapprox(fval, fref; rtol = 1e-9, atol = 1e-9)
+        if k == 2
+            fj = copy(fk); fj[3] += 0.1
+            foreach(i -> groups[i] == 2 && DyadDAQP.update(ds[i], nothing, fj, nothing, nothing, nothing), eachindex(ds))
+            @test_throws ArgumentError DyadDAQP.solve(ps)
+            foreach(i -> groups[i] == 2 && DyadDAQP.update(ds[i], nothing, fk, nothing, nothing, nothing), eachindex(ds))
+            @test DyadDAQP.solve(ps)[3] == DyadDAQP.OPTIMAL
+        end
+    end
+    DyadDAQP.delete!(ps)
+    H2 = copy(H); H2[1, 2] += 0.1; H2[2, 1] += 0.1
+    ds2, _ = split_models(H2, f, A, bu, bl, sense, [1, 2]; rules = 0:1)
+    @test_throws ArgumentError DyadDAQP.ParallelSolver([ds[groups .!= 2]; ds2[groups .== 2]];
+                                                       groups = [groups[groups .!= 2]; groups[groups .== 2]])
+    @test_throws ArgumentError DyadDAQP.ParallelSolver(ds; groups = groups[1:end-1])
 end
 
 @testset "BnB branching rules" begin

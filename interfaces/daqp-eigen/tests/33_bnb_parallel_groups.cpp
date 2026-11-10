@@ -1,4 +1,5 @@
 #include "api.h"
+#include "utils.h"
 
 #include <algorithm>
 #include <cmath>
@@ -10,7 +11,10 @@
 // binary variables, one group per combination of their values, gives the optimum of the single solve, also
 // with several branching rules per group, with equality reduction, with an infeasible group, for an
 // infeasible problem and for a singular Hessian. Groups that do not search restrictions of one problem are
-// rejected, and a group whose threads all end at a limit makes the result not optimal.
+// rejected, and a group whose threads all end at a limit makes the result not optimal. The reusable solver
+// (daqp_parallel_setup_groups) gives the same results over repeated solves with updates, and rejects a
+// difference in f between the groups at a solve. With a singular Hessian, the bound is shared within each
+// group only: a test with groups of different regularizations fails if it is shared by all groups.
 
 namespace {
 
@@ -291,6 +295,146 @@ int main(){
             // Bounds and the branching rule may differ
             run([](Problem& p, DAQPSettings& s, int g){ p.bu[0] = p.bl[0] = g; }, {0, 1}) == DAQP_EXIT_OPTIMAL;
         std::printf("Incompatible groups rejected: %s\n", pass ? "PASS" : "FAIL");
+        all_pass &= pass;
+    }
+
+    // Reusable solver: repeated solves with updates of f and of the bounds (the same in all groups,
+    // except the split variable) give the optimum of the single solve. f that differs between the groups
+    // is rejected by a solve, and the solver is usable again once it is restored. H that differs is
+    // rejected by the setup; a solver can be freed without a solve
+    for(int eq_reduction : {DAQP_EQ_REDUCTION_OFF, DAQP_EQ_REDUCTION_ON}){
+        bool pass = true;
+        std::vector<std::unique_ptr<Problem>> problems = split(4, {0, 5});
+        const std::vector<int> rules = {0, 2};
+        const int n = (int)(problems.size()*rules.size());
+        std::vector<DAQPSettings> settings(n);
+        std::vector<DAQPWorkspace> works(n);
+        std::vector<DAQPWorkspace*> ptrs(n);
+        std::vector<int> groups(n);
+        for(int i = 0; i < n; i++){
+            groups[i] = i/(int)rules.size();
+            settings[i] = make_settings(eq_reduction, rules[i%rules.size()]);
+            works[i] = DAQPWorkspace{};
+            works[i].settings = &settings[i];
+            setup_daqp(&problems[groups[i]]->qp, &works[i], nullptr);
+            ptrs[i] = &works[i];
+        }
+        DAQPParallel* par = daqp_parallel_setup_groups(ptrs.data(), groups.data(), n);
+        pass = pass && par != nullptr;
+        for(int k = 0; par != nullptr && k < 6; k++){
+            const Problem q(200 + k); // Data of another problem of the same structure
+            Problem p(4);
+            for(int i = 0; i < N; i++) p.f[i] = q.f[i];
+            p.bu[N] = q.bu[N];
+            for(auto& pr : problems){
+                for(int i = 0; i < N; i++) pr->f[i] = q.f[i];
+                pr->bu[N] = q.bu[N];
+            }
+            for(int i = 0; i < n; i++) pass = pass && daqp_update_ldp(DAQP_UPDATE_v + DAQP_UPDATE_d, ptrs[i], &problems[groups[i]]->qp) >= 0;
+            const Solution ref = solve_single(p, eq_reduction);
+            Solution s{};
+            DAQPResult res{};
+            res.x = s.x;
+            s.exitflag = daqp_parallel_solve(par, &res);
+            s.fval = res.fval;
+            pass = pass && ref.exitflag == DAQP_EXIT_OPTIMAL && same(s, ref);
+            if(k == 2){ // f of one group differs
+                problems[1]->f[3] += 0.1;
+                for(int i = 0; i < n; i++) if(groups[i] == 1) daqp_update_ldp(DAQP_UPDATE_v, ptrs[i], &problems[1]->qp);
+                pass = pass && daqp_parallel_solve(par, &res) == DAQP_EXIT_UNSUPPORTED;
+                problems[1]->f[3] -= 0.1;
+                for(int i = 0; i < n; i++) if(groups[i] == 1) daqp_update_ldp(DAQP_UPDATE_v, ptrs[i], &problems[1]->qp);
+                pass = pass && daqp_parallel_solve(par, &res) == DAQP_EXIT_OPTIMAL &&
+                    std::fabs(res.fval - ref.fval) <= 1e-9*(1 + std::fabs(ref.fval));
+            }
+        }
+        daqp_parallel_free(par);
+        // Free without a solve
+        par = daqp_parallel_setup_groups(ptrs.data(), groups.data(), n);
+        pass = pass && par != nullptr;
+        daqp_parallel_free(par);
+        // H differs between the groups: rejected by the setup
+        for(int i = 0; i < n; i++) free_work(&works[i]);
+        problems[2]->H[1] += 0.1;
+        for(int i = 0; i < n; i++){
+            works[i] = DAQPWorkspace{};
+            works[i].settings = &settings[i];
+            setup_daqp(&problems[groups[i]]->qp, &works[i], nullptr);
+        }
+        pass = pass && daqp_parallel_setup_groups(ptrs.data(), groups.data(), n) == nullptr;
+        // Invalid groups
+        std::vector<int> gap = groups;
+        for(int& g : gap) if(g == 3) g = 4;
+        pass = pass && daqp_parallel_setup_groups(ptrs.data(), gap.data(), n) == nullptr;
+        for(int i = 0; i < n; i++) free_work(&works[i]);
+        std::printf("Reusable solver with groups and updates, eq_reduction = %2d: %s\n", eq_reduction, pass ? "PASS" : "FAIL");
+        all_pass &= pass;
+    }
+
+    // Singular Hessian with groups whose regularizations differ: x = (b, y), b binary with a large
+    // curvature h, y continuous without curvature (regularized by daqp_bnb_prox with eps/w^2*y^2/2, w the
+    // width of the bounds of y, eps = h*sqrt(zero_tol) as the bounds of b do not change the weight of b).
+    // Group A fixes b = 0 and y = 0 (objective 0, no regularization). Group B fixes b = 1 and has
+    // y in [0, 1]; the cost delta of b = 1 and the linear term -y make the optimum of B in its regularized
+    // problem better than A in the objective J but worse than A in the regularized objective. A bound on
+    // J shared by both groups would prune the optimum of B once A has published its incumbent; the result
+    // must be the better of the single solves of the groups, in every one of the repeated solves (the
+    // order of the threads differs between the solves)
+    {
+        const c_float h = 1e6, eps = h*std::sqrt(DAQP_DEFAULT_ZERO_TOL), slope = 1;
+        const c_float delta = 0.75*slope*slope/eps; // y* = slope/eps, J(B) = delta - slope^2/eps, J_reg(B) = delta - slope^2/(2 eps)
+        c_float H[4] = {h, 0, 0, 0}, f[2] = {-0.5*h + delta, -slope};
+        c_float bu[2][2] = {{0, 0}, {1, 1}}, bl[2][2] = {{0, 0}, {1, 0}};
+        int sense[2][2] = {{DAQP_BINARY, 0}, {DAQP_BINARY, 0}};
+        DAQPProblem qp[2];
+        for(int g_ = 0; g_ < 2; g_++) qp[g_] = {2, 2, 2, H, f, nullptr, bu[g_], bl[g_], sense[g_], nullptr, 0, 0};
+        c_float ref[2];
+        bool pass = true;
+        for(int g_ = 0; g_ < 2; g_++){
+            DAQPSettings st = make_settings(DAQP_EQ_REDUCTION_OFF, 0);
+            DAQPWorkspace w{};
+            w.settings = &st;
+            setup_daqp(&qp[g_], &w, nullptr);
+            pass = pass && w.n_prox > 0;
+            c_float x[2];
+            DAQPResult r{};
+            r.x = x;
+            daqp_solve(&r, &w);
+            pass = pass && r.exitflag > 0;
+            ref[g_] = r.fval;
+            free_work(&w);
+        }
+        pass = pass && ref[1] < ref[0] - 1e-3; // The optimum is in group B
+        for(int per_group : {1, 2}){
+            const int n = 2*per_group;
+            std::vector<DAQPSettings> st(n);
+            std::vector<DAQPWorkspace> works(n);
+            std::vector<DAQPWorkspace*> ptrs(n);
+            std::vector<int> groups(n);
+            for(int i = 0; i < n; i++){
+                groups[i] = i/per_group; // Group A (0) is solved by the calling thread
+                st[i] = make_settings(DAQP_EQ_REDUCTION_OFF, i % per_group);
+                works[i] = DAQPWorkspace{};
+                works[i].settings = &st[i];
+                setup_daqp(&qp[groups[i]], &works[i], nullptr);
+                ptrs[i] = &works[i];
+            }
+            DAQPParallel* par = daqp_parallel_setup_groups(ptrs.data(), groups.data(), n);
+            pass = pass && par != nullptr;
+            int wrong = 0;
+            for(int k = 0; par != nullptr && k < 200; k++){
+                c_float x[2];
+                DAQPResult r{};
+                r.x = x;
+                daqp_parallel_solve(par, &r);
+                if(r.exitflag <= 0 || std::fabs(r.fval - ref[1]) > 1e-9*(1 + std::fabs(ref[1]))) wrong++;
+            }
+            pass = pass && wrong == 0;
+            if(wrong > 0) std::printf("  %d workspace(s) per group: %d of 200 solves wrong\n", per_group, wrong);
+            daqp_parallel_free(par);
+            for(DAQPWorkspace& w : works) free_work(&w);
+        }
+        std::printf("Singular Hessian, groups with different regularizations: %s\n", pass ? "PASS" : "FAIL");
         all_pass &= pass;
     }
     return all_pass ? 0 : 1;
